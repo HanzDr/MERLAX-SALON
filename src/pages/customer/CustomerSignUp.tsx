@@ -5,7 +5,7 @@ import customerLoginBg from "@/assets/customerLoginBg.png";
 import { FaEye, FaEyeSlash } from "react-icons/fa";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-
+// Added a comment
 import { type signUpFormData, signUpSchema } from "@/validation/AuthSchema";
 import { useAuthContext } from "@/features/auth/context/AuthContext";
 
