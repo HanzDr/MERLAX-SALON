@@ -24,7 +24,7 @@ const CustomerSignUp = () => {
   });
 
   const { handleSignUp } = useAuthContext();
-  const today = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
+  const today = new Date().toISOString().split("T")[0];
 
   const onSubmit = async (formData: signUpFormData) => {
     const result = await handleSignUp(formData, reset);

@@ -27,7 +27,7 @@ import RootLayout from "@/layouts/RootLayout";
 import RoleProtectedRoute from "@/public-components/RoleProtectedRoute";
 import { ServicesAndStylistProvider } from "@/features/servicesAndStylist/contexts/ServicesAndStylistContext";
 import { PromoManagementProvider } from "@/features/promo-management/context/promoManagementContext";
-
+import { AppointmentProvider } from "@/features/appointments/context/AppointmentContext";
 const router = createBrowserRouter([
   {
     path: "/",
@@ -52,9 +52,11 @@ const router = createBrowserRouter([
           {
             path: "appointments",
             element: (
-              <ServicesAndStylistProvider>
-                <AdminAppointments />
-              </ServicesAndStylistProvider>
+              <AppointmentProvider>
+                <ServicesAndStylistProvider>
+                  <AdminAppointments />
+                </ServicesAndStylistProvider>
+              </AppointmentProvider>
             ),
           },
           {

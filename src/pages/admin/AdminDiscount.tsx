@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Pencil, Plus, Trash2, X } from "lucide-react";
 import { useForm, useController } from "react-hook-form";
 import { useServicesAndStylistContext } from "@/features/servicesAndStylist/contexts/ServicesAndStylistContext";
+import { usePromoManagementContext } from "@/features/promo-management/context/promoManagementContext";
 
 /* ------------------------------- Types ---------------------------------- */
 
@@ -15,12 +16,12 @@ type DiscountRow = {
   type: DiscountType;
   value: number; // Fixed: PHP; Percentage: %
   applies_to: AppliesTo;
-  included_services: string[]; // service IDs
-  discounted?: number | null; // optional, UI only
+  included_services: string[]; // item IDs (services OR packages)
+  discounted_min?: number | null; // computed, UI only
+  discounted_max?: number | null; // computed, UI only
   start_date?: string | null;
   end_date?: string | null;
   uses?: number | null;
-  code?: string | null;
   status: "Active" | "Inactive";
 };
 
@@ -29,14 +30,21 @@ type DiscountFormData = {
   type: DiscountType;
   value: number;
   applies_to: AppliesTo;
-  included_services: string[];
-  discounted?: number | null;
+  included_services: string[]; // item IDs (services OR packages)
+  discounted?: number | null; // UI only, not saved
   start_date?: Date | null;
   end_date?: Date | null;
   uses?: number | null;
-  code?: string | null;
   status: "Active" | "Inactive";
 };
+
+type ServiceItem = {
+  id: string;
+  name: string;
+  min_price?: number;
+  max_price?: number;
+};
+type PackageItem = { id: string; name: string; price?: number };
 
 /* ------------------------------ Helpers --------------------------------- */
 
@@ -66,6 +74,15 @@ const humanDate = (d?: string | Date | null) => {
   ][date.getMonth()];
   return `${m} ${date.getDate()} ${date.getFullYear()}`;
 };
+
+// Local YYYY-MM-DD (no timezone offset surprises)
+const toLocalISODate = (date: Date) => {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+};
+const todayLocalISO = () => toLocalISODate(new Date());
 
 /* ------------------------------ Confirm --------------------------------- */
 
@@ -132,17 +149,20 @@ function DiscountModal({
   mode,
   onClose,
   onSave,
-  services, // [{id,name}]
+  serviceItems, // normalized services [{id,name,min_price,max_price}]
+  packageItems, // normalized packages [{id,name,price}]
   initialValues,
 }: {
   open: boolean;
   mode: ModalMode;
   onClose: () => void;
   onSave: (data: DiscountFormData) => Promise<boolean>;
-  services: { id: string; name: string }[];
+  serviceItems: ServiceItem[];
+  packageItems: PackageItem[];
   initialValues?: Partial<DiscountFormData>;
 }) {
   const overlayRef = useRef<HTMLDivElement>(null);
+  const todayISO = todayLocalISO();
 
   const {
     register,
@@ -162,19 +182,18 @@ function DiscountModal({
       start_date: undefined as unknown as Date,
       end_date: undefined as unknown as Date,
       uses: undefined,
-      code: "",
       status: "Active",
     },
   });
 
-  // — included_services controlled array (same behavior as Packages modal)
+  // included_services controlled array
   const { field: includedField } = useController({
     name: "included_services",
     control,
     defaultValue: [],
   });
 
-  // Prefill on open for edit
+  // Prefill on open for edit / reset on add
   useEffect(() => {
     if (!open) return;
     if (mode === "edit" && initialValues) {
@@ -195,7 +214,6 @@ function DiscountModal({
         uses:
           (initialValues.uses as number | null) ??
           (undefined as unknown as number),
-        code: (initialValues.code as string | null) ?? "",
         status: (initialValues.status as "Active" | "Inactive") ?? "Active",
       });
     } else {
@@ -209,7 +227,6 @@ function DiscountModal({
         start_date: undefined as unknown as Date,
         end_date: undefined as unknown as Date,
         uses: undefined,
-        code: "",
         status: "Active",
       });
     }
@@ -223,12 +240,82 @@ function DiscountModal({
     return () => window.removeEventListener("keydown", onKey);
   }, [open, onClose]);
 
+  // Switch item source by applies_to (no auto-clear here; we clear on user change)
+  const appliesTo = watch("applies_to");
+  const isService = appliesTo === "Service";
+  const currentItems = isService ? serviceItems : packageItems;
+
   const selectedIds = (includedField.value as string[] | undefined) ?? [];
   const type = watch("type");
+  const value = watch("value") as number | undefined;
+
+  // Subtotals
+  const { subtotalMin, subtotalMax } = useMemo(() => {
+    if (!currentItems?.length || !selectedIds?.length) {
+      return { subtotalMin: 0, subtotalMax: 0 };
+    }
+    if (isService) {
+      const byId = new Map(
+        (currentItems as ServiceItem[]).map((s) => [
+          s.id,
+          {
+            min: Number(s.min_price ?? 0),
+            max: Number(s.max_price ?? s.min_price ?? 0),
+          },
+        ])
+      );
+      let min = 0;
+      let max = 0;
+      for (const id of selectedIds) {
+        const p = byId.get(id);
+        if (!p) continue;
+        min += p.min;
+        max += Math.max(p.max, p.min);
+      }
+      return { subtotalMin: min, subtotalMax: Math.max(max, min) };
+    } else {
+      const byId = new Map(
+        (currentItems as PackageItem[]).map((p) => [p.id, Number(p.price ?? 0)])
+      );
+      const sum = selectedIds.reduce((acc, id) => acc + (byId.get(id) ?? 0), 0);
+      return { subtotalMin: sum, subtotalMax: sum };
+    }
+  }, [currentItems, selectedIds, isService]);
+
+  // Compute discounted total(s) (read-only)
+  const { discountedMin, discountedMax } = useMemo(() => {
+    if (!value || value < 0)
+      return { discountedMin: subtotalMin, discountedMax: subtotalMax };
+    if (type === "Percentage") {
+      const pct = Math.min(Math.max(value, 0), 100);
+      const factor = 1 - pct / 100;
+      return {
+        discountedMin: Math.max(subtotalMin * factor, 0),
+        discountedMax: Math.max(subtotalMax * factor, 0),
+      };
+    }
+    // Fixed PHP off — subtract same amount across the range
+    return {
+      discountedMin: Math.max(subtotalMin - value, 0),
+      discountedMax: Math.max(subtotalMax - value, 0),
+    };
+  }, [subtotalMin, subtotalMax, type, value]);
+
+  // For end date min (>= start date or today)
+  const startDateVal = watch("start_date") as Date | undefined;
+  const dynamicEndMinISO = startDateVal
+    ? toLocalISODate(startDateVal)
+    : todayISO;
+
+  // register for applies_to, but clear included items only when the USER toggles it
+  const appliesToReg = register("applies_to");
 
   const submit = async (data: DiscountFormData) => {
     const deduped = Array.from(new Set(selectedIds));
-    const ok = await onSave({ ...data, included_services: deduped });
+    const ok = await onSave({
+      ...data,
+      included_services: deduped,
+    });
     if (ok) onClose();
   };
 
@@ -256,7 +343,9 @@ function DiscountModal({
           <X className="h-5 w-5" />
         </button>
 
-        <h2 className="mb-1 text-3xl font-bold">Add Discount</h2>
+        <h2 className="mb-1 text-3xl font-bold">
+          {mode === "edit" ? "Edit Discount" : "Add Discount"}
+        </h2>
         <p className="mb-6 text-sm text-gray-500">
           Add discount and fill in the details for customer to use
         </p>
@@ -265,7 +354,7 @@ function DiscountModal({
           onSubmit={handleSubmit(submit)}
           className="grid grid-cols-1 gap-6 md:grid-cols-2"
         >
-          {/* Left column — matches screenshot fields */}
+          {/* Left column */}
           <div className="space-y-4">
             {/* Name */}
             <div>
@@ -301,10 +390,24 @@ function DiscountModal({
                 type="number"
                 step="0.01"
                 inputMode="decimal"
-                placeholder={type === "Percentage" ? "15" : "₱200.00"}
-                {...register("value", { valueAsNumber: true })}
+                placeholder={watch("type") === "Percentage" ? "15" : "₱200.00"}
+                {...register("value", {
+                  valueAsNumber: true,
+                  validate: (v) => {
+                    if (v == null || Number.isNaN(v)) return true;
+                    if (v < 0) return "Value must be ≥ 0";
+                    if (watch("type") === "Percentage" && v > 100)
+                      return "Percentage can’t exceed 100";
+                    return true;
+                  },
+                })}
                 className="w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:ring-2 focus:ring-amber-400"
               />
+              {errors.value && (
+                <p className="mt-1 text-sm text-red-600">
+                  {errors.value.message as string}
+                </p>
+              )}
             </div>
 
             {/* Applies To */}
@@ -313,7 +416,11 @@ function DiscountModal({
                 Applies To:
               </label>
               <select
-                {...register("applies_to")}
+                {...appliesToReg}
+                onChange={(e) => {
+                  appliesToReg.onChange(e); // update form value
+                  includedField.onChange([]); // clear selections only on USER toggle
+                }}
                 className="w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:ring-2 focus:ring-amber-400"
               >
                 <option value="Service">Service</option>
@@ -321,16 +428,31 @@ function DiscountModal({
               </select>
             </div>
 
-            {/* Start Date */}
+            {/* Start Date (no past dates) */}
             <div>
               <label className="mb-1 block text-sm font-medium">
                 Start Date:
               </label>
               <input
                 type="date"
-                {...register("start_date")}
+                min={todayISO}
+                {...register("start_date", {
+                  valueAsDate: true,
+                  validate: (v) => {
+                    if (!v) return true; // optional
+                    const sel = toLocalISODate(v);
+                    if (sel < todayISO)
+                      return "Start date can’t be in the past";
+                    return true;
+                  },
+                })}
                 className="w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:ring-2 focus:ring-amber-400"
               />
+              {errors.start_date && (
+                <p className="mt-1 text-sm text-red-600">
+                  {errors.start_date.message as string}
+                </p>
+              )}
             </div>
 
             {/* Amount of Uses */}
@@ -364,38 +486,32 @@ function DiscountModal({
             </div>
           </div>
 
-          {/* Right column — Included Services + Discounted + End Date + Code */}
+          {/* Right column — Included Items + Discounted (read-only) + End Date */}
           <div className="space-y-4">
-            {/* Included Services box (same behavior as Packages modal) */}
+            {/* Included Items: list of checkboxes (services OR packages) */}
             <div>
-              <div className="mb-1 flex items-center justify-between">
-                <label className="block text-sm font-medium">
-                  Included Services :
-                </label>
-                <button
-                  type="button"
-                  className="rounded bg-amber-400 px-3 py-1 text-xs font-medium text-black shadow hover:bg-amber-500"
-                  onClick={() => {
-                    // placeholder “Add Service” button — can open another picker later
-                    const all = Array.from(new Set(services.map((s) => s.id)));
-                    includedField.onChange(all);
-                  }}
-                >
-                  Add Service
-                </button>
-              </div>
+              <label className="mb-1 block text-sm font-medium">
+                {isService ? "Included Services :" : "Included Packages :"}
+              </label>
 
               <div className="h-40 w-full overflow-auto rounded-lg border border-gray-300 p-2">
-                {services.length === 0 && (
+                {currentItems.length === 0 && (
                   <p className="px-1 text-sm text-gray-500">
-                    No services available.
+                    No items available.
                   </p>
                 )}
                 <ul className="space-y-2">
-                  {services.map((s) => {
+                  {currentItems.map((s: any) => {
                     const selected = (includedField.value as string[]).includes(
                       s.id
                     );
+                    const rightText = isService
+                      ? ` — ${peso(Number(s.min_price ?? 0))} — ${peso(
+                          Number(s.max_price ?? s.min_price ?? 0)
+                        )}`
+                      : typeof s.price === "number"
+                      ? ` — ${peso(Number(s.price))}`
+                      : "";
                     return (
                       <li key={s.id}>
                         <label className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 hover:bg-gray-50">
@@ -413,7 +529,10 @@ function DiscountModal({
                               includedField.onChange(Array.from(current));
                             }}
                           />
-                          <span className="text-sm">{s.name}</span>
+                          <span className="text-sm">
+                            {s.name}
+                            {rightText}
+                          </span>
                         </label>
                       </li>
                     );
@@ -426,7 +545,7 @@ function DiscountModal({
                   type="button"
                   className="text-xs text-gray-600 underline"
                   onClick={() =>
-                    includedField.onChange(services.map((s) => s.id))
+                    includedField.onChange(currentItems.map((s: any) => s.id))
                   }
                 >
                   Select all
@@ -441,45 +560,63 @@ function DiscountModal({
               </div>
             </div>
 
-            {/* Discounted (free text for now) */}
+            {/* Discounted (READ-ONLY, computed) */}
             <div>
               <label className="mb-1 block text-sm font-medium">
-                Discounted:
+                Discounted Total:
               </label>
               <input
-                type="number"
-                step="0.01"
-                inputMode="decimal"
-                placeholder="₱1800.00"
-                {...register("discounted", { valueAsNumber: true })}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:ring-2 focus:ring-amber-400"
+                type="text"
+                readOnly
+                value={
+                  !selectedIds || selectedIds.length === 0
+                    ? "—"
+                    : isService
+                    ? `${peso(discountedMin)} — ${peso(
+                        discountedMax
+                      )} (from ${peso(subtotalMin)} — ${peso(subtotalMax)})`
+                    : `${peso(discountedMin)} (from ${peso(subtotalMin)})`
+                }
+                className="w-full cursor-not-allowed rounded-lg border border-gray-300 bg-gray-50 px-3 py-2 text-gray-700 outline-none"
+                title="Calculated from selected items and discount value"
               />
             </div>
 
-            {/* End Date */}
+            {/* End Date (no past dates, and not before start date) */}
             <div>
               <label className="mb-1 block text-sm font-medium">
                 End Date:
               </label>
               <input
                 type="date"
-                {...register("end_date")}
+                min={dynamicEndMinISO}
+                {...register("end_date", {
+                  valueAsDate: true,
+                  validate: (v, form) => {
+                    if (!v) return true; // optional
+                    const endISO = toLocalISODate(v);
+                    if (endISO < todayISO)
+                      return "End date can’t be in the past";
+                    const s = form.start_date as Date | undefined | null;
+                    if (s) {
+                      const startISO = toLocalISODate(s);
+                      if (endISO < startISO)
+                        return "End date can’t be before the start date";
+                    }
+                    return true;
+                  },
+                })}
                 className="w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:ring-2 focus:ring-amber-400"
               />
-            </div>
-
-            {/* Code */}
-            <div>
-              <label className="mb-1 block text-sm font-medium">Code:</label>
-              <input
-                type="text"
-                {...register("code")}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:ring-2 focus:ring-amber-400"
-              />
+              {errors.end_date && (
+                <p className="mt-1 text-sm text-red-600">
+                  {errors.end_date.message as string}
+                </p>
+              )}
             </div>
           </div>
 
-          {/* Buttons (styled like screenshot) */}
+          {/* Buttons */}
           <div className="col-span-1 mt-2 flex items-center justify-center gap-4 md:col-span-2">
             <button
               type="button"
@@ -511,50 +648,184 @@ function DiscountModal({
 const AdminDiscount: React.FC = () => {
   const { services: svc } = useServicesAndStylistContext();
 
-  // Services to {id, name}
-  const normalizedServices = useMemo(
+  // Pull from promo-management context (backed by usePromoManagement hook)
+  const {
+    packages,
+    fetchPackages,
+    discounts,
+    fetchDiscounts,
+    addDiscount,
+    deleteDiscount,
+  } = usePromoManagementContext();
+
+  const [openAdd, setOpenAdd] = useState(false);
+
+  // Fetch packages & discounts on mount
+  useEffect(() => {
+    fetchPackages?.();
+    fetchDiscounts?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Normalize services to {id, name, min_price, max_price}
+  const normalizedServices: ServiceItem[] = useMemo(
     () =>
       (svc ?? []).map((s: any) => ({
-        id: String(s.service_id),
+        id: String(s.service_id ?? s.id ?? s.uuid),
         name: String(s.name),
+        min_price: Number(s.min_price ?? s.price_min ?? 0),
+        max_price: Number(
+          s.max_price ?? s.price_max ?? s.min_price ?? s.price_min ?? 0
+        ),
       })),
     [svc]
   );
 
-  // local UI state (no backend yet)
+  // Normalize packages to {id, name, price}
+  const normalizedPackages: PackageItem[] = useMemo(
+    () =>
+      (packages ?? []).map((p: any) => ({
+        id: String(p.package_id ?? p.id ?? p.uuid),
+        name: String(p.name),
+        price: Number(p.price ?? p.total_price ?? 0),
+      })),
+    [packages]
+  );
+
+  // Map for displaying names in table across both sources
+  const allItemsMap = useMemo(() => {
+    const m = new Map<string, string>();
+    normalizedServices.forEach((s) => m.set(s.id, s.name));
+    normalizedPackages.forEach((p) => m.set(p.id, p.name));
+    return m;
+  }, [normalizedServices, normalizedPackages]);
+
+  // Utility to compute discounted min/max from a DiscountFormData
+  const computeDiscountedRange = (d: DiscountFormData) => {
+    if (d.applies_to === "Package") {
+      const byId = new Map(
+        normalizedPackages.map((p) => [p.id, Number(p.price ?? 0)])
+      );
+      const sum = (d.included_services ?? []).reduce(
+        (acc, id) => acc + (byId.get(id) ?? 0),
+        0
+      );
+      if (!d.value || d.value < 0) return { min: sum, max: sum };
+      if (d.type === "Percentage") {
+        const pct = Math.min(Math.max(d.value, 0), 100);
+        const factor = 1 - pct / 100;
+        const val = Math.max(sum * factor, 0);
+        return { min: val, max: val };
+      }
+      const val = Math.max(sum - d.value, 0);
+      return { min: val, max: val };
+    } else {
+      const byId = new Map(
+        normalizedServices.map((s) => [
+          s.id,
+          {
+            min: Number(s.min_price ?? 0),
+            max: Number(s.max_price ?? s.min_price ?? 0),
+          },
+        ])
+      );
+      let subtotalMin = 0;
+      let subtotalMax = 0;
+      for (const id of d.included_services ?? []) {
+        const p = byId.get(id);
+        if (!p) continue;
+        subtotalMin += p.min;
+        subtotalMax += Math.max(p.max, p.min);
+      }
+      if (!d.value || d.value < 0)
+        return { min: subtotalMin, max: subtotalMax };
+      if (d.type === "Percentage") {
+        const pct = Math.min(Math.max(d.value, 0), 100);
+        const factor = 1 - pct / 100;
+        return {
+          min: Math.max(subtotalMin * factor, 0),
+          max: Math.max(subtotalMax * factor, 0),
+        };
+      }
+      return {
+        min: Math.max(subtotalMin - d.value, 0),
+        max: Math.max(subtotalMax - d.value, 0),
+      };
+    }
+  };
+
+  // Local UI table rows (derived from discounts + normalized items)
   const [rows, setRows] = useState<DiscountRow[]>([]);
-  const [openAdd, setOpenAdd] = useState(false);
+
+  // Whenever discounts or normalized items change, rebuild UI rows
+  useEffect(() => {
+    const next = (discounts ?? []).map((d: any): DiscountRow => {
+      const formLike: DiscountFormData = {
+        name: d.name,
+        type: d.type,
+        value: d.value,
+        applies_to: d.applies_to,
+        included_services: d.included_services ?? [],
+        start_date: d.start_date ? new Date(d.start_date) : null,
+        end_date: d.end_date ? new Date(d.end_date) : null,
+        uses: d.amount_of_uses ?? null,
+        status: d.status,
+      };
+      const { min, max } = computeDiscountedRange(formLike);
+      return {
+        id: String(d.discount_id ?? d.id),
+        name: String(d.name),
+        type: d.type as DiscountType,
+        value: Number(d.value),
+        applies_to: d.applies_to as AppliesTo,
+        included_services: Array.from(new Set(d.included_services ?? [])),
+        discounted_min: min,
+        discounted_max: max,
+        start_date: d.start_date ? String(d.start_date) : null,
+        end_date: d.end_date ? String(d.end_date) : null,
+        uses: d.amount_of_uses == null ? null : Number(d.amount_of_uses),
+        status: d.status as "Active" | "Inactive",
+      };
+    });
+    setRows(next);
+  }, [discounts, normalizedServices, normalizedPackages]); // normalized lists affect computed ranges
+
+  // Add — uses addDiscount() then refreshes from backend
+  const handleSaveAdd = async (d: DiscountFormData): Promise<boolean> => {
+    try {
+      if (!addDiscount) return false;
+      const res = await addDiscount({
+        name: d.name,
+        type: d.type,
+        value: d.value,
+        applies_to: d.applies_to,
+        included_services: d.included_services ?? [],
+        start_date: d.start_date ?? null,
+        end_date: d.end_date ?? null,
+        amount_of_uses: d.uses ?? null,
+        status: d.status,
+      } as any);
+
+      if (!res?.success) {
+        console.error("Failed to add discount:", (res as any)?.message);
+        return false;
+      }
+
+      await fetchDiscounts?.(); // refresh table from DB
+      return true;
+    } catch (e) {
+      console.error(e);
+      return false;
+    }
+  };
+
+  // Edit — still local UI only (no backend update endpoint yet)
   const [openEdit, setOpenEdit] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingInitial, setEditingInitial] = useState<
     Partial<DiscountFormData> | undefined
   >(undefined);
-  const [openDelete, setOpenDelete] = useState(false);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
-  const [deletingName, setDeletingName] = useState<string>("");
 
-  // Add
-  const handleSaveAdd = async (d: DiscountFormData): Promise<boolean> => {
-    const id = crypto.randomUUID();
-    const row: DiscountRow = {
-      id,
-      name: d.name,
-      type: d.type,
-      value: d.value,
-      applies_to: d.applies_to,
-      included_services: d.included_services ?? [],
-      discounted: d.discounted ?? null,
-      start_date: d.start_date ? new Date(d.start_date).toISOString() : null,
-      end_date: d.end_date ? new Date(d.end_date).toISOString() : null,
-      uses: d.uses ?? null,
-      code: d.code ?? "",
-      status: d.status,
-    };
-    setRows((prev) => [row, ...prev]);
-    return true;
-  };
-
-  // Edit
   const openEditModalFor = (r: DiscountRow) => {
     setEditingId(r.id);
     setEditingInitial({
@@ -563,11 +834,9 @@ const AdminDiscount: React.FC = () => {
       value: r.value,
       applies_to: r.applies_to,
       included_services: r.included_services,
-      discounted: r.discounted ?? undefined,
       start_date: r.start_date ? new Date(r.start_date) : undefined,
       end_date: r.end_date ? new Date(r.end_date) : undefined,
       uses: r.uses ?? undefined,
-      code: r.code ?? "",
       status: r.status,
     });
     setOpenEdit(true);
@@ -575,6 +844,7 @@ const AdminDiscount: React.FC = () => {
 
   const handleSaveEdit = async (d: DiscountFormData): Promise<boolean> => {
     if (!editingId) return false;
+    const { min, max } = computeDiscountedRange(d);
     setRows((prev) =>
       prev.map((r) =>
         r.id === editingId
@@ -585,30 +855,41 @@ const AdminDiscount: React.FC = () => {
               value: d.value,
               applies_to: d.applies_to,
               included_services: d.included_services ?? [],
-              discounted: d.discounted ?? null,
+              discounted_min: min,
+              discounted_max: max,
               start_date: d.start_date
                 ? new Date(d.start_date).toISOString()
                 : null,
               end_date: d.end_date ? new Date(d.end_date).toISOString() : null,
               uses: d.uses ?? null,
-              code: d.code ?? "",
               status: d.status,
             }
           : r
       )
     );
+    // Note: not persisted; add an update endpoint in hook later if needed
     return true;
   };
 
-  // Delete
+  // Delete — calls deleteDiscount() (soft delete), then updates UI
+  const [openDelete, setOpenDelete] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deletingName, setDeletingName] = useState<string>("");
+
   const openDeleteModalFor = (r: DiscountRow) => {
     setDeletingId(r.id);
     setDeletingName(r.name);
     setOpenDelete(true);
   };
-  const confirmDelete = () => {
-    if (!deletingId) return;
-    setRows((prev) => prev.filter((r) => r.id !== deletingId));
+
+  const confirmDelete = async () => {
+    if (!deletingId || !deleteDiscount) return;
+    const res = await deleteDiscount(deletingId);
+    if (res?.success) {
+      setRows((prev) => prev.filter((r) => r.id !== deletingId));
+    } else {
+      console.error("Failed to delete discount:", (res as any)?.message);
+    }
     setOpenDelete(false);
     setDeletingId(null);
     setDeletingName("");
@@ -616,7 +897,7 @@ const AdminDiscount: React.FC = () => {
 
   return (
     <div className="mx-auto max-w-6xl">
-      {/* Header for the Discounts page (Add button lives here) */}
+      {/* Header */}
       <div className="mb-4 flex items-center">
         <h2 className="text-2xl font-semibold">Discounts</h2>
         <div className="ml-auto">
@@ -640,85 +921,84 @@ const AdminDiscount: React.FC = () => {
               <th className="px-4 py-3 text-left font-semibold">Value</th>
               <th className="px-4 py-3 text-left font-semibold">Applies To</th>
               <th className="px-4 py-3 text-left font-semibold">
-                Included Services
+                Included Items
               </th>
               <th className="px-4 py-3 text-left font-semibold">Discounted</th>
               <th className="px-4 py-3 text-left font-semibold">Start</th>
               <th className="px-4 py-3 text-left font-semibold">End</th>
               <th className="px-4 py-3 text-left font-semibold">Uses</th>
-              <th className="px-4 py-3 text-left font-semibold">Code</th>
               <th className="px-4 py-3 text-left font-semibold">Status</th>
               <th className="px-4 py-3 text-left font-semibold">Action</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
-            {rows.map((r, i) => (
-              <tr
-                key={r.id}
-                className={i % 2 === 0 ? "bg-orange-50/50" : "bg-white"}
-              >
-                <td className="px-4 py-4">{r.name}</td>
-                <td className="px-4 py-4">{r.type}</td>
-                <td className="px-4 py-4">
-                  {r.type === "Percentage" ? `${r.value}%` : peso(r.value)}
-                </td>
-                <td className="px-4 py-4">{r.applies_to}</td>
-                <td className="px-4 py-4">
-                  {r.included_services
-                    .map((id) => {
-                      // show service names using context list
-                      const svc = (normalizedServices || []).find(
-                        (s) => s.id === id
-                      );
-                      return svc?.name ?? id;
-                    })
-                    .filter(Boolean)
-                    .join(", ") || "—"}
-                </td>
-                <td className="px-4 py-4">
-                  {typeof r.discounted === "number" ? peso(r.discounted) : "—"}
-                </td>
-                <td className="px-4 py-4">{humanDate(r.start_date)}</td>
-                <td className="px-4 py-4">{humanDate(r.end_date)}</td>
-                <td className="px-4 py-4">{r.uses ?? "—"}</td>
-                <td className="px-4 py-4">{r.code ?? "—"}</td>
-                <td className="px-4 py-4">
-                  <span
-                    className={
-                      "rounded-full px-3 py-1 text-sm " +
-                      (r.status === "Active"
-                        ? "bg-green-100 text-green-700"
-                        : "bg-red-100 text-red-600")
-                    }
-                  >
-                    {r.status}
-                  </span>
-                </td>
-                <td className="px-4 py-4">
-                  <div className="flex items-center gap-3 text-gray-600">
-                    <button
-                      className="rounded p-1 hover:bg-gray-100"
-                      title="Edit"
-                      onClick={() => openEditModalFor(r)}
+            {rows.map((r, i) => {
+              const discountedCell =
+                typeof r.discounted_min === "number" &&
+                typeof r.discounted_max === "number"
+                  ? r.discounted_min === r.discounted_max
+                    ? peso(r.discounted_min)
+                    : `${peso(r.discounted_min)} — ${peso(r.discounted_max)}`
+                  : "—";
+              return (
+                <tr
+                  key={r.id}
+                  className={i % 2 === 0 ? "bg-orange-50/50" : "bg-white"}
+                >
+                  <td className="px-4 py-4">{r.name}</td>
+                  <td className="px-4 py-4">{r.type}</td>
+                  <td className="px-4 py-4">
+                    {r.type === "Percentage" ? `${r.value}%` : peso(r.value)}
+                  </td>
+                  <td className="px-4 py-4">{r.applies_to}</td>
+                  <td className="px-4 py-4">
+                    {r.included_services
+                      .map((id) => allItemsMap.get(id) ?? id)
+                      .filter(Boolean)
+                      .join(", ") || "—"}
+                  </td>
+                  <td className="px-4 py-4">{discountedCell}</td>
+                  <td className="px-4 py-4">{humanDate(r.start_date)}</td>
+                  <td className="px-4 py-4">{humanDate(r.end_date)}</td>
+                  <td className="px-4 py-4">{r.uses ?? "—"}</td>
+                  <td className="px-4 py-4">
+                    <span
+                      className={
+                        "rounded-full px-3 py-1 text-sm " +
+                        (r.status === "Active"
+                          ? "bg-green-100 text-green-700"
+                          : "bg-red-100 text-red-600")
+                      }
                     >
-                      <Pencil className="h-5 w-5" />
-                    </button>
-                    <button
-                      className="rounded p-1 hover:bg-gray-100"
-                      title="Delete"
-                      onClick={() => openDeleteModalFor(r)}
-                    >
-                      <Trash2 className="h-5 w-5 text-red-600" />
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            ))}
+                      {r.status}
+                    </span>
+                  </td>
+                  <td className="px-4 py-4">
+                    <div className="flex items-center gap-3 text-gray-600">
+                      <button
+                        className="rounded p-1 hover:bg-gray-100"
+                        title="Edit"
+                        onClick={() => openEditModalFor(r)}
+                      >
+                        <Pencil className="h-5 w-5" />
+                      </button>
+                      <button
+                        className="rounded p-1 hover:bg-gray-100"
+                        title="Delete"
+                        onClick={() => openDeleteModalFor(r)}
+                      >
+                        <Trash2 className="h-5 w-5 text-red-600" />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
             {rows.length === 0 && (
               <tr>
                 <td
                   className="px-4 py-6 text-center text-gray-500"
-                  colSpan={12}
+                  colSpan={11}
                 >
                   No discounts yet.
                 </td>
@@ -734,16 +1014,19 @@ const AdminDiscount: React.FC = () => {
         mode="add"
         onClose={() => setOpenAdd(false)}
         onSave={handleSaveAdd}
-        services={normalizedServices}
+        serviceItems={normalizedServices}
+        packageItems={normalizedPackages}
       />
 
       {/* Edit Modal */}
       <DiscountModal
+        key={openEdit ? editingId ?? "edit" : "edit-closed"} // force clean mount per row
         open={openEdit}
         mode="edit"
         onClose={() => setOpenEdit(false)}
         onSave={handleSaveEdit}
-        services={normalizedServices}
+        serviceItems={normalizedServices}
+        packageItems={normalizedPackages}
         initialValues={editingInitial}
       />
 

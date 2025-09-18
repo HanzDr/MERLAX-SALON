@@ -3,6 +3,8 @@ import { useCallback, useState } from "react";
 import { supabase } from "@/lib/supabaseclient";
 import type { packageFormData } from "@/validation/PromoManagementSchema";
 
+/* ---------------------------- Packages (existing) ---------------------------- */
+
 type CreateResult =
   | { success: true; packageId: string }
   | { success: false; message: string };
@@ -22,12 +24,59 @@ export type PackageRow = {
   display?: boolean;
 };
 
-function isoDate(d: Date) {
-  return new Date(d).toISOString().slice(0, 10);
+function isoDate(d: Date | string) {
+  const dt = typeof d === "string" ? new Date(d) : d;
+  return new Date(dt).toISOString().slice(0, 10);
 }
+
+/* ---------------------------- Discounts (new) ---------------------------- */
+
+type DiscountType = "Fixed" | "Percentage";
+type AppliesTo = "Service" | "Package";
+
+export type DiscountFormData = {
+  name: string;
+  type: DiscountType; // "Fixed" | "Percentage"
+  value: number; // fixed = PHP; percentage = %
+  applies_to: AppliesTo; // "Service" | "Package"
+  start_date?: Date | string | null;
+  end_date?: Date | string | null;
+  amount_of_uses?: number | null;
+  status: "Active" | "Inactive";
+  /**
+   * For applies_to === "Service", put service IDs here.
+   * For applies_to === "Package", put package IDs here.
+   */
+  included_services: string[];
+};
+
+export type DiscountRow = {
+  discount_id: string;
+  name: string;
+  type: DiscountType;
+  value: number;
+  applies_to: AppliesTo;
+  start_date: string | null;
+  end_date: string | null;
+  amount_of_uses: number | null;
+  status: "Active" | "Inactive";
+  included_services: string[]; // service IDs or package IDs depending on applies_to
+  display?: boolean | null;
+};
+
+type CreateDiscountResult =
+  | { success: true; discountId: string }
+  | { success: false; message: string };
+
+type FetchDiscountsResult =
+  | { success: true; data: DiscountRow[] }
+  | { success: false; message: string };
 
 const usePromoManagement = () => {
   const [packages, setPackages] = useState<PackageRow[]>([]);
+  const [discounts, setDiscounts] = useState<DiscountRow[]>([]);
+
+  /* ------------------------- Package CRUD (existing) ------------------------- */
 
   const createPackage = useCallback(
     async (
@@ -37,7 +86,6 @@ const usePromoManagement = () => {
       try {
         const serviceIds = Array.from(new Set(form.included_services));
 
-        // Insert into Package (default display: true)
         const { data: pkg, error: pkgErr } = await supabase
           .from("Package")
           .insert({
@@ -55,7 +103,6 @@ const usePromoManagement = () => {
         if (pkgErr) throw pkgErr;
         const packageId = (pkg as { package_id: string }).package_id;
 
-        // Insert junction rows
         if (serviceIds.length) {
           const rows = serviceIds.map((service_id) => ({
             package_id: packageId,
@@ -93,7 +140,6 @@ const usePromoManagement = () => {
       try {
         const serviceIds = Array.from(new Set(form.included_services));
 
-        // Update Package
         const { error: pkgErr } = await supabase
           .from("Package")
           .update({
@@ -107,7 +153,6 @@ const usePromoManagement = () => {
           .eq("package_id", packageId);
         if (pkgErr) throw pkgErr;
 
-        // Replace relations
         const { error: delErr } = await supabase
           .from("PackageServices")
           .delete()
@@ -141,7 +186,6 @@ const usePromoManagement = () => {
 
   const fetchPackages = useCallback(async () => {
     try {
-      // Only fetch packages where display === true
       const { data: pkgRows, error: pkgErr } = await supabase
         .from("Package")
         .select("*")
@@ -160,7 +204,7 @@ const usePromoManagement = () => {
         servicesMap.get(row.package_id)!.push(row.service_id);
       });
 
-      const merged: PackageRow[] = (pkgRows ?? []).map((p) => ({
+      const merged: PackageRow[] = (pkgRows ?? []).map((p: any) => ({
         package_id: p.package_id,
         name: p.name,
         status: p.status,
@@ -193,14 +237,12 @@ const usePromoManagement = () => {
   const deletePackage = useCallback(
     async (packageId: string): Promise<DeleteResult> => {
       try {
-        // 1) Remove all junction rows for this package
         const { error: svcDelErr } = await supabase
           .from("PackageServices")
           .delete()
           .eq("package_id", packageId);
         if (svcDelErr) throw svcDelErr;
 
-        // 2) Soft delete package (display=false)
         const { error: pkgUpdErr } = await supabase
           .from("Package")
           .update({ display: false })
@@ -221,12 +263,188 @@ const usePromoManagement = () => {
     []
   );
 
+  /* ----------------------------- Discounts API ----------------------------- */
+
+  const addDiscount = useCallback(
+    async (form: DiscountFormData): Promise<CreateDiscountResult> => {
+      try {
+        const targetIds = Array.from(new Set(form.included_services ?? []));
+
+        // 1) Insert Discounts (assumes a `display` column exists; default true)
+        const { data: disc, error: discErr } = await supabase
+          .from("Discounts")
+          .insert({
+            name: form.name,
+            type: form.type,
+            value: form.value,
+            applies_to: form.applies_to,
+            start_date:
+              form.start_date == null ? null : isoDate(form.start_date),
+            end_date: form.end_date == null ? null : isoDate(form.end_date),
+            amount_of_uses:
+              form.amount_of_uses == null ? null : form.amount_of_uses,
+            status: form.status,
+            display: true,
+          })
+          .select("discount_id")
+          .single();
+
+        if (discErr) throw discErr;
+        const discountId = (disc as { discount_id: string }).discount_id;
+
+        // 2) Insert DiscountServices
+        if (targetIds.length) {
+          const rows =
+            form.applies_to === "Service"
+              ? targetIds.map((service_id) => ({
+                  discount_Id: discountId, // keep your original casing if that's the column name
+                  service_id,
+                  package_id: null,
+                }))
+              : targetIds.map((package_id) => ({
+                  discount_Id: discountId,
+                  service_id: null,
+                  package_id,
+                }));
+
+          const { error: linkErr } = await supabase
+            .from("DiscountServices")
+            .insert(rows);
+
+          if (linkErr) {
+            await supabase
+              .from("Discounts")
+              .delete()
+              .eq("discount_id", discountId);
+            throw linkErr;
+          }
+        }
+
+        return { success: true, discountId };
+      } catch (err: unknown) {
+        const message =
+          err instanceof Error
+            ? err.message
+            : typeof err === "string"
+            ? err
+            : JSON.stringify(err);
+        return { success: false, message };
+      }
+    },
+    []
+  );
+
+  /** Fetch discounts where display === true and hydrate included_services */
+  const fetchDiscounts =
+    useCallback(async (): Promise<FetchDiscountsResult> => {
+      try {
+        const { data: discRows, error: discErr } = await supabase
+          .from("Discounts")
+          .select("*")
+          .eq("display", true);
+        if (discErr) throw discErr;
+
+        const { data: linkRows, error: linkErr } = await supabase
+          .from("DiscountServices")
+          .select("discount_Id, service_id, package_id");
+        if (linkErr) throw linkErr;
+
+        // group links by discount_Id
+        const linkMap = new Map<
+          string,
+          Array<{ service_id: string | null; package_id: string | null }>
+        >();
+        (linkRows ?? []).forEach((r: any) => {
+          const key = String(r.discount_Id);
+          if (!linkMap.has(key)) linkMap.set(key, []);
+          linkMap.get(key)!.push({
+            service_id: r.service_id ?? null,
+            package_id: r.package_id ?? null,
+          });
+        });
+
+        const merged: DiscountRow[] = (discRows ?? []).map((d: any) => {
+          const links = linkMap.get(String(d.discount_id)) ?? [];
+          const ids =
+            d.applies_to === "Service"
+              ? (links
+                  .map((l) => (l.service_id ? String(l.service_id) : null))
+                  .filter(Boolean) as string[])
+              : (links
+                  .map((l) => (l.package_id ? String(l.package_id) : null))
+                  .filter(Boolean) as string[]);
+
+          return {
+            discount_id: String(d.discount_id),
+            name: String(d.name),
+            type: d.type as DiscountType,
+            value: Number(d.value),
+            applies_to: d.applies_to as AppliesTo,
+            start_date: d.start_date ? String(d.start_date) : null,
+            end_date: d.end_date ? String(d.end_date) : null,
+            amount_of_uses:
+              d.amount_of_uses == null ? null : Number(d.amount_of_uses),
+            status: d.status as "Active" | "Inactive",
+            included_services: Array.from(new Set(ids)),
+            display: d.display ?? true,
+          };
+        });
+
+        setDiscounts(merged);
+        return { success: true, data: merged };
+      } catch (err: unknown) {
+        const message =
+          err instanceof Error
+            ? err.message
+            : typeof err === "string"
+            ? err
+            : JSON.stringify(err);
+        return { success: false, message };
+      }
+    }, []);
+
+  /** Soft delete discount: update display=false */
+  const deleteDiscount = useCallback(
+    async (discountId: string): Promise<DeleteResult> => {
+      try {
+        const { error } = await supabase
+          .from("Discounts")
+          .update({ display: false })
+          .eq("discount_id", discountId);
+        if (error) throw error;
+
+        // optional: update local state
+        setDiscounts((prev) =>
+          prev.filter((d) => d.discount_id !== discountId)
+        );
+
+        return { success: true };
+      } catch (err: unknown) {
+        const message =
+          err instanceof Error
+            ? err.message
+            : typeof err === "string"
+            ? err
+            : JSON.stringify(err);
+        return { success: false, message };
+      }
+    },
+    []
+  );
+
   return {
+    // packages API
     packages,
     fetchPackages,
     createPackage,
     updatePackage,
     deletePackage,
+
+    // discounts API
+    discounts,
+    fetchDiscounts,
+    addDiscount,
+    deleteDiscount, // "update" == soft-delete by setting display=false
   };
 };
 
