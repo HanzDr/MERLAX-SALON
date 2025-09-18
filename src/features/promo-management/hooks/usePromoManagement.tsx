@@ -1,76 +1,24 @@
-// src/features/promo-management/hooks/usePromoManagement.ts
 import { useCallback, useState } from "react";
 import { supabase } from "@/lib/supabaseclient";
 import type { packageFormData } from "@/validation/PromoManagementSchema";
+import type {
+  CreateResult,
+  UpdateResult,
+  DeleteResult,
+  PackageRow,
+  DiscountType,
+  AppliesTo,
+  DiscountFormData,
+  DiscountRow,
+  CreateDiscountResult,
+  FetchDiscountsResult,
+} from "../types/PromoManagementTypes";
 
-/* ---------------------------- Packages (existing) ---------------------------- */
-
-type CreateResult =
-  | { success: true; packageId: string }
-  | { success: false; message: string };
-
-type UpdateResult = { success: true } | { success: false; message: string };
-type DeleteResult = { success: true } | { success: false; message: string };
-
-export type PackageRow = {
-  package_id: string;
-  name: string;
-  status: "Active" | "Inactive";
-  price: number;
-  start_date: string;
-  end_date: string;
-  expected_duration?: number | null;
-  included_services: string[];
-  display?: boolean;
-};
-
+/* utils */
 function isoDate(d: Date | string) {
   const dt = typeof d === "string" ? new Date(d) : d;
   return new Date(dt).toISOString().slice(0, 10);
 }
-
-/* ---------------------------- Discounts (new) ---------------------------- */
-
-type DiscountType = "Fixed" | "Percentage";
-type AppliesTo = "Service" | "Package";
-
-export type DiscountFormData = {
-  name: string;
-  type: DiscountType; // "Fixed" | "Percentage"
-  value: number; // fixed = PHP; percentage = %
-  applies_to: AppliesTo; // "Service" | "Package"
-  start_date?: Date | string | null;
-  end_date?: Date | string | null;
-  amount_of_uses?: number | null;
-  status: "Active" | "Inactive";
-  /**
-   * For applies_to === "Service", put service IDs here.
-   * For applies_to === "Package", put package IDs here.
-   */
-  included_services: string[];
-};
-
-export type DiscountRow = {
-  discount_id: string;
-  name: string;
-  type: DiscountType;
-  value: number;
-  applies_to: AppliesTo;
-  start_date: string | null;
-  end_date: string | null;
-  amount_of_uses: number | null;
-  status: "Active" | "Inactive";
-  included_services: string[]; // service IDs or package IDs depending on applies_to
-  display?: boolean | null;
-};
-
-type CreateDiscountResult =
-  | { success: true; discountId: string }
-  | { success: false; message: string };
-
-type FetchDiscountsResult =
-  | { success: true; data: DiscountRow[] }
-  | { success: false; message: string };
 
 const usePromoManagement = () => {
   const [packages, setPackages] = useState<PackageRow[]>([]);
@@ -270,7 +218,7 @@ const usePromoManagement = () => {
       try {
         const targetIds = Array.from(new Set(form.included_services ?? []));
 
-        // 1) Insert Discounts (assumes a `display` column exists; default true)
+        // 1) Insert Discounts
         const { data: disc, error: discErr } = await supabase
           .from("Discounts")
           .insert({
@@ -297,12 +245,12 @@ const usePromoManagement = () => {
           const rows =
             form.applies_to === "Service"
               ? targetIds.map((service_id) => ({
-                  discount_Id: discountId, // keep your original casing if that's the column name
+                  discount_id: discountId,
                   service_id,
                   package_id: null,
                 }))
               : targetIds.map((package_id) => ({
-                  discount_Id: discountId,
+                  discount_id: discountId,
                   service_id: null,
                   package_id,
                 }));
@@ -346,16 +294,16 @@ const usePromoManagement = () => {
 
         const { data: linkRows, error: linkErr } = await supabase
           .from("DiscountServices")
-          .select("discount_Id, service_id, package_id");
+          .select("discount_id, service_id, package_id");
         if (linkErr) throw linkErr;
 
-        // group links by discount_Id
+        // group links by discount_id
         const linkMap = new Map<
           string,
           Array<{ service_id: string | null; package_id: string | null }>
         >();
         (linkRows ?? []).forEach((r: any) => {
-          const key = String(r.discount_Id);
+          const key = String(r.discount_id);
           if (!linkMap.has(key)) linkMap.set(key, []);
           linkMap.get(key)!.push({
             service_id: r.service_id ?? null,
@@ -413,11 +361,9 @@ const usePromoManagement = () => {
           .eq("discount_id", discountId);
         if (error) throw error;
 
-        // optional: update local state
         setDiscounts((prev) =>
           prev.filter((d) => d.discount_id !== discountId)
         );
-
         return { success: true };
       } catch (err: unknown) {
         const message =

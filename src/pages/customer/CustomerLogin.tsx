@@ -42,7 +42,7 @@ const CustomerLogin = () => {
           <h1 className="text-3xl sm:text-4xl font-bold text-[#FFB030] text-center font-newsreader">
             MERLAX
           </h1>
-          <p className="text-center text-gray-600">User Login</p>
+          <p className="text-center text-gray-600">Customer Login</p>
 
           {/* Global Auth Error */}
           {authError && (
@@ -112,6 +112,10 @@ const CustomerLogin = () => {
           >
             Login
           </button>
+
+          <Link to="/customer/signup">
+            <p className="text-sm text-blue-500 hover:underline">Sign Up</p>
+          </Link>
         </form>
       </div>
 

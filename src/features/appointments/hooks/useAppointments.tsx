@@ -1,383 +1,887 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useState } from "react";
 import { supabase } from "@/lib/supabaseclient";
+import type {
+  PaymentMethod,
+  AppointmentRow,
+  Service,
+  PackageRow,
+  DiscountEligibility,
+  DiscountLimitRow,
+  AdminAppt,
+  HistoryRow,
+} from "../types/appointmentTypes";
+import {
+  dayKey,
+  normalizeDay,
+  localDateFromISO,
+  toMin,
+  toHHMM,
+  addMin,
+  overlap,
+  isTodayISO,
+  roundUp15,
+  COUNT_STATUSES,
+  buildCustomerName,
+} from "../methods/appointmentsHelperMethods";
 
-/** --------- Types from your schema (simplified to what we need) --------- */
+/* === DB naming adapters (match your actual schema) === */
+const TBL_APPT_STYLIST = "AppointmentStylists"; // singular in your DB
+const TBL_APPT_PLAN = "AppointmentServicePlan";
+const COL_PACKAGE_ID = "package_id" as const; // <-- use this consistently
 
-export type Stylist = {
-  stylist_id: string;
-  name?: string; // adjust if your column is different (first_name/last_name etc.)
-};
-
-export type StylistSchedule = {
-  stylistSchedule_id: string;
-  stylist_id: string;
-  day_of_week: number; // 0=Sun ... 6=Sat
-  start_time: string; // "HH:MM"
-  end_time: string; // "HH:MM"
-};
-
-export type Service = {
-  service_id: string;
-  name: string;
-  duration: number; // minutes
-  min_price?: number | null;
-  max_price?: number | null;
-  display?: boolean | null;
-};
-
-export type PackageRow = {
-  package_id: string;
-  name?: string;
-  price: number;
-  status: "Active" | "Inactive";
-  start_date?: string | null;
-  end_date?: string | null;
-  expected_duration: number; // minutes
-  display?: boolean | null;
-};
-
-export type StylistServiceLink = {
-  stylistServices_id: string;
-  stylist_id: string;
-  service_id: string;
-};
-
-export type PackageServiceLink = {
-  packageServices_id: string;
-  service_id: string;
-  package_id: string;
-};
-
-export type DiscountRow = {
-  discount_id: string;
-  name: string;
-  type: "Fixed" | "Percentage";
-  value: number;
-  applies_to: "Service" | "Package";
-  start_date?: string | null;
-  end_date?: string | null;
-  amount_of_uses?: number | null;
-  status: "Active" | "Inactive";
-  display?: boolean | null; // if you added this in your Discounts table
-};
-
-/** The unified "plan" the user can pick: either a service or a package */
-export type PlanOption =
-  | {
-      kind: "service";
-      id: string; // service_id
-      name: string;
-      duration: number; // minutes
-    }
-  | {
-      kind: "package";
-      id: string; // package_id
-      name: string;
-      duration: number; // minutes (from expected_duration)
-    };
-
-/** Time-slot item returned by the hook (for pills) */
-export type TimeSlot = {
-  startISO: string; // 2025-02-20T08:00:00.000Z (local date applied)
-  endISO: string;
-  label: string; // "8:00 AM - 11:00 AM"
-};
-
-/** --------- Small helpers --------- */
-
-function pad(n: number) {
-  return String(n).padStart(2, "0");
-}
-
-function toLocalMidnight(date: Date) {
-  return new Date(
-    date.getFullYear(),
-    date.getMonth(),
-    date.getDate(),
-    0,
-    0,
-    0,
-    0
-  );
-}
-
-function parseHHMM(hhmm: string) {
-  const [h, m] = hhmm.split(":").map((x) => parseInt(x, 10));
-  return { h, m };
-}
-
-function addMinutes(date: Date, minutes: number) {
-  return new Date(date.getTime() + minutes * 60 * 1000);
-}
-
-function format12h(date: Date) {
-  let h = date.getHours();
-  const m = date.getMinutes();
-  const ampm = h >= 12 ? "PM" : "AM";
-  h = h % 12;
-  if (h === 0) h = 12;
-  return `${h}:${pad(m)}${ampm}`;
-}
-
-function sameDay(d1: Date, d2: Date) {
-  return (
-    d1.getFullYear() === d2.getFullYear() &&
-    d1.getMonth() === d2.getMonth() &&
-    d1.getDate() === d2.getDate()
-  );
-}
-
-/** Returns 0..6 (Sun..Sat) */
-function getDayOfWeek(date: Date) {
-  return date.getDay();
-}
-
-/** Given working blocks for that day and a duration, compute slot candidates */
-function buildTimeSlotsForDay(
-  date: Date,
-  blocks: Array<{ startHHMM: string; endHHMM: string }>,
-  durationMin: number,
-  stepMin = 30
-): TimeSlot[] {
-  const slots: TimeSlot[] = [];
-  const base = toLocalMidnight(date);
-
-  for (const b of blocks) {
-    const { h: sh, m: sm } = parseHHMM(b.startHHMM);
-    const { h: eh, m: em } = parseHHMM(b.endHHMM);
-
-    const blockStart = new Date(base);
-    blockStart.setHours(sh, sm, 0, 0);
-
-    const blockEnd = new Date(base);
-    blockEnd.setHours(eh, em, 0, 0);
-
-    // move a sliding window of size durationMin with step stepMin
-    for (
-      let start = new Date(blockStart);
-      addMinutes(start, durationMin) <= blockEnd;
-      start = addMinutes(start, stepMin)
-    ) {
-      const end = addMinutes(start, durationMin);
-      slots.push({
-        startISO: start.toISOString(),
-        endISO: end.toISOString(),
-        label: `${format12h(start)} - ${format12h(end)}`,
-      });
-    }
-  }
-
-  // De-dup / sort
-  const unique = new Map(slots.map((s) => [s.startISO, s]));
-  return Array.from(unique.values()).sort((a, b) =>
-    a.startISO.localeCompare(b.startISO)
-  );
-}
-
-/** --------- The hook --------- */
-
-const useAppointments = () => {
-  const [stylists, setStylists] = useState<Stylist[]>([]);
+/* ===================================================================== */
+export function useAppointments() {
   const [services, setServices] = useState<Service[]>([]);
   const [packages, setPackages] = useState<PackageRow[]>([]);
-  const [discounts, setDiscounts] = useState<DiscountRow[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
-  /** Fetch all stylists (adjust columns as needed) */
-  const fetchStylists = useCallback(async () => {
-    setError(null);
+  const loadServices = useCallback(async () => {
     const { data, error } = await supabase
-      .from("Stylist")
-      .select("stylist_id, name");
-    if (error) setError(error.message);
-    setStylists((data ?? []) as any);
+      .from("Services")
+      .select("service_id,name,duration,min_price,max_price,display")
+      .eq("display", true);
+    if (error) throw error;
+    setServices(data ?? []);
     return data ?? [];
   }, []);
 
-  /** Fetch all services (we’ll filter by stylist later using StylistServices) */
-  const fetchAllServices = useCallback(async () => {
-    const { data, error } = await supabase
-      .from("Service")
-      .select("service_id, name, duration, min_price, max_price, display");
-    if (error) setError(error.message);
-    setServices((data ?? []) as any);
-    return data ?? [];
-  }, []);
-
-  /** Fetch packages that can be shown (display === true) */
-  const fetchAllPackages = useCallback(async () => {
+  const loadPackages = useCallback(async () => {
     const { data, error } = await supabase
       .from("Package")
       .select(
-        "package_id, name, price, status, start_date, end_date, expected_duration, display"
+        "package_id,name,price,expected_duration,status,start_date,end_date,display"
       )
       .eq("display", true);
-    if (error) setError(error.message);
-    setPackages((data ?? []) as any);
+    if (error) throw error;
+    setPackages(data ?? []);
     return data ?? [];
   }, []);
 
-  /** Fetch a stylist’s schedule (all days) */
-  const fetchStylistSchedule = useCallback(async (stylistId: string) => {
-    const { data, error } = await supabase
-      .from("StylistSchedules")
-      .select(
-        "stylistSchedule_id, stylist_id, day_of_week, start_time, end_time"
-      )
-      .eq("stylist_id", stylistId);
-    if (error) setError(error.message);
-    return (data ?? []) as StylistSchedule[];
-  }, []);
-
-  /** Fetch service ids the stylist can perform */
-  const fetchStylistServiceIds = useCallback(async (stylistId: string) => {
-    const { data, error } = await supabase
-      .from("StylistServices")
-      .select("stylistServices_id, stylist_id, service_id")
-      .eq("stylist_id", stylistId);
-    if (error) setError(error.message);
-    const ids = ((data ?? []) as StylistServiceLink[]).map((r) => r.service_id);
-    return Array.from(new Set(ids));
-  }, []);
-
-  /** Build plan options for a given stylist: stylist’s services + all packages */
+  /** Stable plan options (no date filter). */
   const getPlanOptionsForStylist = useCallback(
-    async (stylistId: string): Promise<PlanOption[]> => {
-      setLoading(true);
-      setError(null);
-      try {
-        // Ensure base data exists
-        if (services.length === 0) await fetchAllServices();
-        if (packages.length === 0) await fetchAllPackages();
+    async (stylist_id: string) => {
+      if (!services.length) await loadServices();
+      if (!packages.length) await loadPackages();
 
-        const allowedServiceIds = await fetchStylistServiceIds(stylistId);
+      const svcIdsRes = await supabase
+        .from("StylistServices")
+        .select("service_id")
+        .eq("stylist_id", stylist_id);
+      if (svcIdsRes.error) throw svcIdsRes.error;
 
-        const svcOptions: PlanOption[] = services
-          .filter(
-            (s) =>
-              allowedServiceIds.includes(s.service_id) && (s.display ?? true)
-          )
-          .map((s) => ({
-            kind: "service" as const,
-            id: s.service_id,
-            name: s.name,
-            duration: Number(s.duration ?? 0),
-          }));
+      const allowed = new Set((svcIdsRes.data ?? []).map((r) => r.service_id));
 
-        // For packages: include those with expected_duration > 0 and Active (optional check)
-        const pkgOptions: PlanOption[] = packages
-          .filter((p) => (p.display ?? true) && p.status !== "Inactive")
-          .map((p) => ({
-            kind: "package" as const,
-            id: p.package_id,
-            name: p.name ?? `Package ${p.package_id.slice(0, 6)}`,
-            duration: Number(p.expected_duration ?? 0),
-          }));
-
-        return [...svcOptions, ...pkgOptions].filter((o) => o.duration > 0);
-      } finally {
-        setLoading(false);
-      }
-    },
-    [
-      services,
-      packages,
-      fetchAllServices,
-      fetchAllPackages,
-      fetchStylistServiceIds,
-    ]
-  );
-
-  /** Compute time slots for a chosen day & plan */
-  const getAvailableTimeSlots = useCallback(
-    async (params: {
-      stylistId: string;
-      date: Date;
-      plan: PlanOption | null;
-      stepMinutes?: number; // default 30
-    }) => {
-      const { stylistId, date, plan, stepMinutes = 30 } = params;
-      if (!stylistId || !date || !plan) return [] as TimeSlot[];
-
-      const schedule = await fetchStylistSchedule(stylistId);
-      const dow = getDayOfWeek(date);
-
-      const blocks = schedule
-        .filter((b) => Number(b.day_of_week) === dow)
-        .map((b) => ({
-          startHHMM: b.start_time,
-          endHHMM: b.end_time,
+      const svcOpts = services
+        .filter((s) => allowed.has(s.service_id))
+        .map((s) => ({
+          type: "Service" as const,
+          id: s.service_id,
+          name: s.name,
+          duration: s.duration,
         }));
 
-      if (blocks.length === 0) return [];
+      const pkgOpts = packages
+        .filter((p) => (p.status ?? "Active").toLowerCase() === "active")
+        .map((p) => ({
+          type: "Package" as const,
+          id: p.package_id,
+          name: p.name,
+          duration: Number(p.expected_duration ?? 0) || 0,
+        }));
 
-      const slots = buildTimeSlotsForDay(
-        date,
-        blocks,
-        plan.duration,
-        stepMinutes
+      return [...svcOpts, ...pkgOpts].sort((a, b) =>
+        a.name.localeCompare(b.name)
       );
-      return slots;
     },
-    [fetchStylistSchedule]
+    [services, packages, loadServices, loadPackages]
   );
 
-  /** Optional: active discounts for display in the dropdown */
-  const fetchActiveDiscounts = useCallback(async () => {
-    const today = new Date();
-    const todayStr = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(
-      today.getDate()
-    )}`;
-    // status=Active and ((no date range) or inside range). If you have "display" column, keep eq("display", true)
-    const { data, error } = await supabase
-      .from("Discounts")
-      .select(
-        "discount_id, name, type, value, applies_to, start_date, end_date, amount_of_uses, status, display"
-      )
-      .eq("status", "Active")
-      .or(
-        `start_date.is.null,end_date.is.null,and(start_date.lte.${todayStr},end_date.gte.${todayStr})`
+  /** Available slots from schedules + appointments (2-step, no join) */
+  const getAvailableTimeSlots = useCallback(
+    async (args: {
+      stylist_id: string;
+      plan: { type: "Service" | "Package"; id: string };
+      date: string; // YYYY-MM-DD
+    }) => {
+      const weekday = dayKey(localDateFromISO(args.date).getDay());
+
+      // 1) Schedules
+      const schedRes = await supabase
+        .from("StylistSchedules")
+        .select("day_of_week,start_time,end_time")
+        .eq("stylist_id", args.stylist_id);
+      if (schedRes.error) throw schedRes.error;
+
+      const windows = (schedRes.data ?? [])
+        .map((r) => ({
+          day: normalizeDay(r.day_of_week),
+          start: String(r.start_time).slice(0, 5),
+          end: String(r.end_time).slice(0, 5),
+        }))
+        .filter((w) => w.day === weekday)
+        .map((w) => ({ start: w.start, end: w.end }));
+
+      // 2) Duration
+      let duration = 0;
+
+      if (args.plan.type === "Service") {
+        const svcLocal = services.find((s) => s.service_id === args.plan.id);
+        if (svcLocal) {
+          duration = Number(svcLocal.duration ?? 0) || 0;
+        } else {
+          const { data, error } = await supabase
+            .from("Services")
+            .select("duration")
+            .eq("service_id", args.plan.id)
+            .single();
+          if (error) throw error;
+          duration =
+            Number(
+              (data as { duration?: number | null } | null)?.duration ?? 0
+            ) || 0;
+        }
+      } else {
+        const pkgLocal = packages.find((p) => p.package_id === args.plan.id);
+        if (pkgLocal) {
+          duration = Number(pkgLocal.expected_duration ?? 0) || 0;
+        } else {
+          const { data, error } = await supabase
+            .from("Package")
+            .select("expected_duration")
+            .eq("package_id", args.plan.id)
+            .single();
+          if (error) throw error;
+          duration =
+            Number(
+              (data as { expected_duration?: number | null } | null)
+                ?.expected_duration ?? 0
+            ) || 0;
+        }
+      }
+
+      if (duration <= 0 || windows.length === 0) return [];
+
+      // 3) Busy times — uses singular AppointmentStylists
+      const links = await supabase
+        .from(TBL_APPT_STYLIST)
+        .select("appointment_id")
+        .eq("stylist_id", args.stylist_id);
+      if (links.error) throw links.error;
+
+      const ids = (links.data ?? [])
+        .map((r: any) => r.appointment_id)
+        .filter(Boolean);
+
+      let busy: { start: string; end: string }[] = [];
+      if (ids.length > 0) {
+        const apptRes = await supabase
+          .from("Appointments")
+          .select(
+            "expectedStart_time,expectedEnd_time,status,display,date,appointment_id"
+          )
+          .in("appointment_id", ids)
+          .eq("date", args.date)
+          .eq("display", true);
+        if (apptRes.error) throw apptRes.error;
+
+        busy = (apptRes.data ?? [])
+          .filter((a) => (a.status ?? "Booked").toLowerCase() !== "cancelled")
+          .map((a) => ({
+            start: String(a.expectedStart_time).slice(0, 5),
+            end: String(a.expectedEnd_time).slice(0, 5),
+          }));
+      }
+
+      // 4) Build slots
+      const step = 15;
+      const slots: { start: string; end: string }[] = [];
+
+      const now = new Date();
+      const cutoff = isTodayISO(args.date)
+        ? roundUp15(now.getHours() * 60 + now.getMinutes())
+        : null;
+
+      for (const w of windows) {
+        let startMin = toMin(w.start);
+        if (cutoff !== null) startMin = Math.max(startMin, cutoff);
+
+        const latestStart = toMin(w.end) - duration;
+        let cursor = toHHMM(startMin);
+        while (toMin(cursor) <= latestStart) {
+          const end = addMin(cursor, duration);
+          const conflict = busy.some((b) =>
+            overlap(cursor, end, b.start, b.end)
+          );
+          if (!conflict) slots.push({ start: cursor, end });
+          cursor = addMin(cursor, step);
+        }
+      }
+
+      return slots;
+    },
+    [services, packages]
+  );
+
+  /* --------------------- Discount eligibility --------------------- */
+  const canUseDiscount = useCallback(
+    async (args: {
+      discount_id: string;
+      customer_id?: string | null;
+    }): Promise<DiscountEligibility> => {
+      const { discount_id, customer_id } = args;
+
+      const { data: disc, error: discErr } = await supabase
+        .from("Discounts")
+        .select("discount_id,amount_of_uses")
+        .eq("discount_id", discount_id)
+        .single();
+
+      if (discErr || !disc) {
+        return {
+          ok: false,
+          reason: "not_found",
+          global_used: 0,
+          global_limit: null,
+          customer_used: 0,
+          customer_limit: null,
+        };
+      }
+
+      const limits = disc as DiscountLimitRow;
+      const globalCap = limits.amount_of_uses;
+      const customerCap = 1 as number | null; // DEFAULT_PER_CUSTOMER_LIMIT
+
+      const { data: links, error: linkErr } = await supabase
+        .from("AppointmentDiscount")
+        .select("appointment_id")
+        .eq("discount_id", discount_id);
+      if (linkErr) throw linkErr;
+
+      const apptIds = (links ?? [])
+        .map((r: any) => r.appointment_id)
+        .filter(Boolean);
+
+      let appts: AppointmentRow[] = [];
+      if (apptIds.length > 0) {
+        const { data: apptsData, error: apptsErr } = await supabase
+          .from("Appointments")
+          .select("appointment_id, customer_id, status, display")
+          .in("appointment_id", apptIds)
+          .eq("display", true)
+          .in("status", COUNT_STATUSES as unknown as string[]);
+        if (apptsErr) throw apptsErr;
+        appts = (apptsData ?? []) as AppointmentRow[];
+      }
+
+      const globalUsed = appts.length;
+      const customerUsed =
+        customer_id == null
+          ? 0
+          : appts.filter((a) => a.customer_id === customer_id).length;
+
+      if (globalCap != null && globalUsed >= globalCap) {
+        return {
+          ok: false,
+          reason: "global",
+          global_used: globalUsed,
+          global_limit: globalCap,
+          customer_used: customerUsed,
+          customer_limit: customerCap,
+        };
+      }
+
+      if (customer_id && customerCap != null && customerUsed >= customerCap) {
+        return {
+          ok: false,
+          reason: "customer",
+          global_used: globalUsed,
+          global_limit: globalCap,
+          customer_used: customerUsed,
+          customer_limit: customerCap,
+        };
+      }
+
+      return {
+        ok: true,
+        global_used: globalUsed,
+        global_limit: globalCap,
+        customer_used: customerUsed,
+        customer_limit: customerCap,
+      };
+    },
+    []
+  );
+
+  const filterEligibleDiscountsForCustomer = useCallback(
+    async (discountIds: string[], customer_id?: string | null) => {
+      if (discountIds.length === 0) return [];
+      const checks = await Promise.all(
+        discountIds.map((id) =>
+          canUseDiscount({ discount_id: id, customer_id })
+        )
       );
-    if (error) setError(error.message);
-    setDiscounts((data ?? []) as any);
-    return data ?? [];
+      return discountIds.filter((_, i) => checks[i].ok);
+    },
+    [canUseDiscount]
+  );
+
+  /* ------------------------------ CRUD ------------------------------ */
+  const createAppointment = useCallback(
+    async (args: {
+      stylist_id: string;
+      plan_type: "Service" | "Package";
+      plan_id: string;
+      date: string;
+      expectedStart_time: string;
+      expectedEnd_time: string;
+      customer_id?: string | null;
+      comments?: string | null;
+      total_amount?: number | null;
+      payment_method?: PaymentMethod | null;
+      discount_id?: string | null;
+    }) => {
+      const { data: appt, error } = await supabase
+        .from("Appointments")
+        .insert({
+          date: args.date,
+          expectedStart_time: args.expectedStart_time,
+          expectedEnd_time: args.expectedEnd_time,
+          comments: args.comments ?? null,
+          total_amount: args.total_amount ?? null,
+          payment_method: args.payment_method ?? null,
+          status: "Booked",
+          display: true,
+          customer_id: args.customer_id ?? null,
+        })
+        .select("appointment_id")
+        .single();
+      if (error) throw error;
+      const appointmentId = appt.appointment_id;
+
+      // singular AppointmentStylists
+      const { error: stylistErr } = await supabase
+        .from(TBL_APPT_STYLIST)
+        .insert({ appointment_id: appointmentId, stylist_id: args.stylist_id });
+      if (stylistErr) throw stylistErr;
+
+      // AppointmentServicePlan with package_id
+      const planRow =
+        args.plan_type === "Service"
+          ? {
+              appointment_id: appointmentId,
+              service_id: args.plan_id,
+              [COL_PACKAGE_ID]: null,
+            }
+          : {
+              appointment_id: appointmentId,
+              service_id: null,
+              [COL_PACKAGE_ID]: args.plan_id,
+            };
+
+      const { error: planErr } = await supabase
+        .from(TBL_APPT_PLAN)
+        .insert(planRow as any);
+      if (planErr) throw planErr;
+
+      if (args.discount_id) {
+        const { error: discErr } = await supabase
+          .from("AppointmentDiscount")
+          .insert({
+            appointment_id: appointmentId,
+            discount_id: args.discount_id,
+          });
+        if (discErr) throw discErr;
+      }
+
+      return appointmentId;
+    },
+    []
+  );
+
+  const updateAppointment = useCallback(
+    async (appointment_id: string, patch: Partial<AppointmentRow>) => {
+      const { error } = await supabase
+        .from("Appointments")
+        .update(patch)
+        .eq("appointment_id", appointment_id)
+        .eq("display", true);
+      if (error) throw error;
+      return true;
+    },
+    []
+  );
+
+  /** 🧩 Admin modal: replace stylists/plans + update amount/payment (schema-aligned) */
+  const updateAppointmentDetails = useCallback(
+    async (args: {
+      appointment_id: string;
+      stylist_ids: string[]; // full replacement
+      plans: Array<{ type: "Service" | "Package"; id: string }>; // full replacement
+      total_amount?: number | null;
+      payment_method?: PaymentMethod | null;
+    }) => {
+      const {
+        appointment_id,
+        stylist_ids,
+        plans,
+        total_amount,
+        payment_method,
+      } = args;
+
+      // 1) Update amount / payment
+      if (total_amount != null || payment_method != null) {
+        const { error } = await supabase
+          .from("Appointments")
+          .update({
+            ...(total_amount != null ? { total_amount } : {}),
+            ...(payment_method != null ? { payment_method } : {}),
+          })
+          .eq("appointment_id", appointment_id)
+          .eq("display", true);
+        if (error) throw error;
+      }
+
+      // 2) Replace stylists (delete → insert) on AppointmentStylists
+      {
+        const { error: delErr } = await supabase
+          .from(TBL_APPT_STYLIST)
+          .delete()
+          .eq("appointment_id", appointment_id);
+        if (delErr) throw delErr;
+
+        if (stylist_ids.length) {
+          const rows = stylist_ids.map((stylist_id) => ({
+            appointment_id,
+            stylist_id,
+          }));
+          const { error: insErr } = await supabase
+            .from(TBL_APPT_STYLIST)
+            .insert(rows);
+          if (insErr) throw insErr;
+        }
+      }
+
+      // 3) Replace plans (delete → insert) on AppointmentServicePlan
+      {
+        const { error: delErr } = await supabase
+          .from(TBL_APPT_PLAN)
+          .delete()
+          .eq("appointment_id", appointment_id);
+        if (delErr) throw delErr;
+
+        if (plans.length) {
+          const rows = plans.map((p) =>
+            p.type === "Service"
+              ? { appointment_id, service_id: p.id, [COL_PACKAGE_ID]: null }
+              : { appointment_id, service_id: null, [COL_PACKAGE_ID]: p.id }
+          );
+
+          const { error: insErr } = await supabase
+            .from(TBL_APPT_PLAN)
+            .insert(rows as any[]);
+          if (insErr) throw insErr;
+        }
+      }
+
+      return true;
+    },
+    []
+  );
+
+  const softDeleteAppointment = useCallback(async (appointment_id: string) => {
+    const { error } = await supabase
+      .from("Appointments")
+      .update({ display: false })
+      .eq("appointment_id", appointment_id);
+    if (error) throw error;
+    return true;
   }, []);
 
-  /** Convenience: initial boot (stylists + services + packages + discounts) */
-  const boot = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      await Promise.all([
-        fetchStylists(),
-        fetchAllServices(),
-        fetchAllPackages(),
-        fetchActiveDiscounts(),
-      ]);
-    } finally {
-      setLoading(false);
-    }
-  }, [fetchStylists, fetchAllServices, fetchAllPackages, fetchActiveDiscounts]);
+  /* ----------------- Admin: Next 3 weeks (Mon–Sat) ----------------- */
+  const loadUpcomingAdminAppointments = useCallback(async (): Promise<
+    AdminAppt[]
+  > => {
+    const toISO = (d: Date) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+        d.getDate()
+      ).padStart(2, "0")}`;
 
+    const now = new Date();
+    const startISO = toISO(now);
+    const end = new Date(now);
+    end.setDate(end.getDate() + 20);
+    const endISO = toISO(end);
+
+    const { data: apptsRaw, error: apptErr } = await supabase
+      .from("Appointments")
+      .select(
+        "appointment_id,date,expectedStart_time,expectedEnd_time,status,customer_id,display,total_amount"
+      )
+      .gte("date", startISO)
+      .lte("date", endISO)
+      .eq("display", true);
+    if (apptErr) throw apptErr;
+
+    const monToSat = (iso: string) => {
+      const [y, m, d] = iso.split("-").map(Number);
+      const dt = new Date(y, (m || 1) - 1, d || 1);
+      const dow = dt.getDay();
+      return dow >= 1 && dow <= 6;
+    };
+
+    const appts = (apptsRaw ?? []).filter((a) => monToSat(a.date));
+    if (appts.length === 0) return [];
+
+    const apptIds = appts.map((a) => a.appointment_id);
+
+    // --- Stylists (collect ALL stylists per appointment)
+    const { data: links, error: linkErr } = await supabase
+      .from(TBL_APPT_STYLIST)
+      .select("appointment_id,stylist_id")
+      .in("appointment_id", apptIds);
+    if (linkErr) throw linkErr;
+
+    const apptToStylistIds = new Map<string, string[]>();
+    const stylistIds = new Set<string>();
+    for (const l of links ?? []) {
+      const arr = apptToStylistIds.get(l.appointment_id) ?? [];
+      if (l.stylist_id) {
+        arr.push(l.stylist_id);
+        stylistIds.add(l.stylist_id);
+      }
+      apptToStylistIds.set(l.appointment_id, arr);
+    }
+
+    let stylistNameById = new Map<string, string>();
+    if (stylistIds.size > 0) {
+      const { data: stylistsData, error: sErr } = await supabase
+        .from("Stylists")
+        .select("stylist_id,name")
+        .in("stylist_id", Array.from(stylistIds));
+      if (sErr) throw sErr;
+      stylistNameById = new Map(
+        (stylistsData ?? []).map((s: any) => [s.stylist_id, s.name as string])
+      );
+    }
+
+    // --- Plans (use the correct package column) + allow multiple rows
+    const { data: plans, error: planErr } = await supabase
+      .from(TBL_APPT_PLAN)
+      .select(`appointment_id,service_id,${COL_PACKAGE_ID}`)
+      .in("appointment_id", apptIds);
+    if (planErr) throw planErr;
+
+    const svcIds = new Set<string>();
+    const pkgIds = new Set<string>();
+    const apptPlanRef = new Map<
+      string,
+      { service_ids: string[]; package_ids: string[] }
+    >();
+    for (const p of plans ?? []) {
+      const ref = apptPlanRef.get(p.appointment_id) ?? {
+        service_ids: [],
+        package_ids: [],
+      };
+      if (p.service_id) {
+        ref.service_ids.push(p.service_id);
+        svcIds.add(p.service_id);
+      }
+      const pkgId = (p as any)[COL_PACKAGE_ID] as string | null;
+      if (pkgId) {
+        ref.package_ids.push(pkgId);
+        pkgIds.add(pkgId);
+      }
+      apptPlanRef.set(p.appointment_id, ref);
+    }
+
+    let svcById = new Map<
+      string,
+      { name: string; min_price?: number | null; max_price?: number | null }
+    >();
+    if (svcIds.size > 0) {
+      const { data: svcData, error: svcErr } = await supabase
+        .from("Services")
+        .select("service_id,name,min_price,max_price")
+        .in("service_id", Array.from(svcIds));
+      if (svcErr) throw svcErr;
+      svcById = new Map(
+        (svcData ?? []).map((s: any) => [
+          s.service_id,
+          {
+            name: s.name as string,
+            min_price: s.min_price,
+            max_price: s.max_price,
+          },
+        ])
+      );
+    }
+
+    let pkgById = new Map<string, { name: string; price?: number | null }>();
+    if (pkgIds.size > 0) {
+      const { data: pkgData, error: pkgErr } = await supabase
+        .from("Package")
+        .select("package_id,name,price")
+        .in("package_id", Array.from(pkgIds));
+      if (pkgErr) throw pkgErr;
+      pkgById = new Map(
+        (pkgData ?? []).map((p: any) => [
+          p.package_id,
+          { name: p.name as string, price: p.price },
+        ])
+      );
+    }
+
+    const norm: AdminAppt[] = appts.map((a) => {
+      // ✅ status normalization — keep Ongoing so UI stays pink on refresh
+      const rawLower = String(a.status ?? "").toLowerCase();
+      const status: AdminAppt["status"] = /cancel/.test(rawLower)
+        ? "Cancelled"
+        : /complete/.test(rawLower)
+        ? "Completed"
+        : /ongoing|on-going/.test(rawLower)
+        ? "Ongoing"
+        : !a.customer_id
+        ? "Walk-In"
+        : "Booked";
+
+      // ALL stylists, joined
+      const sids = apptToStylistIds.get(a.appointment_id) ?? [];
+      const stylistNames = sids
+        .map((id) => stylistNameById.get(id))
+        .filter(Boolean) as string[];
+      const stylist = stylistNames.length ? stylistNames.join(", ") : "—";
+
+      // ALL plans, joined (services + packages)
+      const ref = apptPlanRef.get(a.appointment_id) ?? {
+        service_ids: [],
+        package_ids: [],
+      };
+      const planNames: string[] = [
+        ...(ref.service_ids
+          .map((id) => svcById.get(id)?.name)
+          .filter(Boolean) as string[]),
+        ...(ref.package_ids
+          .map((id) => pkgById.get(id)?.name)
+          .filter(Boolean) as string[]),
+      ];
+      const plan = planNames.length ? planNames.join(", ") : "—";
+
+      // prefer stored total; otherwise estimate
+      let price = Number(a.total_amount ?? 0) || 0;
+      if (!price) {
+        const svcEst = ref.service_ids
+          .map((id) => svcById.get(id))
+          .reduce(
+            (sum, m) =>
+              sum +
+              (Number(m?.min_price ?? 0) || Number(m?.max_price ?? 0) || 0),
+            0
+          );
+        const pkgEst = ref.package_ids
+          .map((id) => Number(pkgById.get(id)?.price ?? 0))
+          .reduce((s, n) => s + n, 0);
+        price = svcEst + pkgEst;
+      }
+
+      const customer = a.customer_id ? "Customer" : "Walk-In";
+
+      return {
+        id: a.appointment_id,
+        date: a.date,
+        start: String(a.expectedStart_time).slice(0, 5),
+        end: String(a.expectedEnd_time).slice(0, 5),
+        customer,
+        plan,
+        stylist,
+        status,
+        price,
+        customer_id: a.customer_id ?? null,
+      };
+    });
+
+    norm.sort((x, y) =>
+      `${x.date} ${x.start}`.localeCompare(`${y.date} ${y.start}`)
+    );
+
+    return norm;
+  }, []);
+
+  /* ----------------- Admin: History (paginated table) --------------- */
+  async function loadAdminAppointmentHistory(opts: {
+    page: number; // 1-based
+    pageSize: number;
+    search?: string; // matches customer/stylist/notes/etc.
+  }): Promise<{ items: HistoryRow[]; total: number }> {
+    const { page, pageSize, search } = opts;
+    const from = (page - 1) * pageSize;
+    const to = from + pageSize - 1;
+    const allowedStatus = ["Completed", "Cancelled", "completed", "cancelled"];
+    let base = supabase
+      .from("Appointments")
+      .select(
+        "appointment_id,date,status,total_amount,comments,customer_id,display",
+        { count: "exact" }
+      )
+      .eq("display", true)
+      .in("status", allowedStatus)
+      .order("date", { ascending: false })
+      .range(from, to);
+
+    if (search && search.trim()) {
+      const term = `%${search.trim()}%`;
+      base = base.or(`status.ilike.${term},comments.ilike.${term}`);
+    }
+
+    const { data: pageRows, error, count } = await base;
+    if (error) throw error;
+
+    const itemsBase = pageRows ?? [];
+
+    // Collect IDs for joins
+    const apptIds = itemsBase.map((r) => r.appointment_id);
+    const customerIds = Array.from(
+      new Set(itemsBase.map((r) => r.customer_id).filter(Boolean) as string[])
+    );
+
+    // Appointment → stylist link (singular AppointmentStylists)
+    const { data: links, error: linkErr } = await supabase
+      .from(TBL_APPT_STYLIST)
+      .select("appointment_id,stylist_id")
+      .in("appointment_id", apptIds);
+    if (linkErr) throw linkErr;
+
+    const stylistIds = Array.from(
+      new Set(
+        (links ?? []).map((l) => l.stylist_id).filter(Boolean) as string[]
+      )
+    );
+
+    // Load stylist names
+    let stylistNameById = new Map<string, string>();
+    if (stylistIds.length) {
+      const { data: stylists, error: sErr } = await supabase
+        .from("Stylists")
+        .select("stylist_id,name")
+        .in("stylist_id", stylistIds);
+      if (sErr) throw sErr;
+      stylistNameById = new Map(
+        (stylists ?? []).map((s: any) => [s.stylist_id, s.name as string])
+      );
+    }
+
+    // Load customer names (first/middle/last)
+    let customerNameById = new Map<string, string>();
+    if (customerIds.length) {
+      const { data: customers, error: cErr } = await supabase
+        .from("Customers")
+        .select("customer_id,firstName,middleName,lastName")
+        .in("customer_id", customerIds);
+      if (cErr) throw cErr;
+
+      customerNameById = new Map(
+        (customers ?? []).map((c: any) => [
+          c.customer_id,
+          buildCustomerName({
+            firstName: c.firstName,
+            middleName: c.middleName,
+            lastName: c.lastName,
+          }) ?? "",
+        ])
+      );
+    }
+
+    // If search includes a person name, match on computed names too
+    let filteredRows = itemsBase;
+    if (search && search.trim()) {
+      const q = search.trim().toLowerCase();
+      const hasNameHit = (r: any) => {
+        const cust = r.customer_id ? customerNameById.get(r.customer_id) : null;
+        const link = (links ?? []).find(
+          (l) => l.appointment_id === r.appointment_id
+        );
+        const sty = link?.stylist_id
+          ? (stylistNameById.get(link.stylist_id) as string | undefined)
+          : null;
+        return (
+          (cust ?? "").toLowerCase().includes(q) ||
+          (sty ?? "").toLowerCase().includes(q)
+        );
+      };
+      filteredRows = filteredRows.filter((r) => {
+        const statusHit =
+          String(r.status ?? "")
+            .toLowerCase()
+            .includes(q) ||
+          String(r.comments ?? "")
+            .toLowerCase()
+            .includes(q);
+        return statusHit || hasNameHit(r);
+      });
+    }
+
+    // Map to HistoryRow
+    const items: HistoryRow[] = filteredRows.map((r: any) => {
+      const link = (links ?? []).find(
+        (l) => l.appointment_id === r.appointment_id
+      );
+      const stylistName = link?.stylist_id
+        ? (stylistNameById.get(link.stylist_id) as string | undefined) ?? null
+        : null;
+
+      const customerName = r.customer_id
+        ? customerNameById.get(r.customer_id) || null
+        : null;
+
+      const note =
+        r.customer_id == null ? "Walk-In" : r.comments ?? "Booked Online";
+
+      // Normalize status for UI
+      const statusRaw: string = r.status ?? "";
+      const status = /complete/i.test(statusRaw)
+        ? "Completed"
+        : /cancel/i.test(statusRaw)
+        ? "Cancelled"
+        : /ongoing|on-going/i.test(statusRaw)
+        ? "Ongoing"
+        : /book|confirm/i.test(statusRaw)
+        ? "Booked"
+        : statusRaw;
+
+      return {
+        id: r.appointment_id,
+        customer_name: customerName,
+        stylist_name: stylistName,
+        service_date: r.date,
+        status: status as HistoryRow["status"],
+        total_amount: r.total_amount ?? null,
+        notes: note,
+        customer_id: r.customer_id ?? null,
+      };
+    });
+
+    return { items, total: count ?? items.length };
+  }
+
+  /* ------------------------------ Return ------------------------------ */
   return {
-    // state
-    stylists,
     services,
     packages,
-    discounts,
-    loading,
-    error,
-
-    // actions
-    boot,
-    fetchStylists,
-    fetchAllServices,
-    fetchAllPackages,
-    fetchActiveDiscounts,
+    loadServices,
+    loadPackages,
     getPlanOptionsForStylist,
     getAvailableTimeSlots,
+    createAppointment,
+    updateAppointment,
+    updateAppointmentDetails,
+    softDeleteAppointment,
+
+    // Discounts
+    canUseDiscount,
+    filterEligibleDiscountsForCustomer,
+
+    // Admin helpers
+    loadUpcomingAdminAppointments,
+    loadAdminAppointmentHistory,
   };
-};
+}
 
 export default useAppointments;

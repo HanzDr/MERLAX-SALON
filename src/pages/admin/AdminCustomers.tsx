@@ -52,6 +52,7 @@ type ProfileLike = Customer & {
   feedbacks?: Feedback[];
   is_blocked?: boolean; // important
   auth_user_id?: string; // ✅ needed to call setCustomerBlocked
+  role?: string; // ✅ "admin" | "customer" | etc.
 };
 
 // ---------- Helpers ----------
@@ -126,17 +127,21 @@ const ViewProfileModal = ({
         <div className="flex items-center justify-between border-b px-6 py-4">
           <h3 className="text-2xl font-bold">Customer Profile</h3>
           <div className="flex items-center gap-2">
-            <button
-              disabled={busy}
-              onClick={() => onToggleBlock?.(profile)}
-              className={`rounded-xl px-3 py-2 text-sm font-medium disabled:opacity-60 ${
-                profile.is_blocked
-                  ? "bg-emerald-600 text-white hover:bg-emerald-700"
-                  : "bg-rose-600 text-white hover:bg-rose-700"
-              }`}
-            >
-              {profile.is_blocked ? "Unblock" : "Block"}
-            </button>
+            {/* Hide Block/Unblock for admins */}
+            {profile.role !== "admin" ? (
+              <button
+                disabled={busy}
+                onClick={() => onToggleBlock?.(profile)}
+                className={`rounded-xl px-3 py-2 text-sm font-medium disabled:opacity-60 ${
+                  profile.is_blocked
+                    ? "bg-emerald-600 text-white hover:bg-emerald-700"
+                    : "bg-rose-600 text-white hover:bg-rose-700"
+                }`}
+              >
+                {profile.is_blocked ? "Unblock" : "Block"}
+              </button>
+            ) : null}
+
             <button
               onClick={onClose}
               className="rounded-full p-2 hover:bg-gray-100"
@@ -365,6 +370,12 @@ const AdminCustomers = () => {
 
   // -- Toggle block/unblock (table & modal) via server action
   const handleToggleBlock = async (customer: ProfileLike) => {
+    // Guard: never block admins (defense in depth)
+    if (customer.role === "admin") {
+      alert("Admins cannot be blocked.");
+      return;
+    }
+
     const id = (customer.customer_id ?? (customer as any).id) as string;
 
     // Try the common fields for the Supabase Auth user id
@@ -508,17 +519,21 @@ const AdminCustomers = () => {
                       >
                         <ExternalLink className="h-5 w-5" />
                       </button>
-                      <button
-                        disabled={busyId === getId(c)}
-                        onClick={() => handleToggleBlock(c as ProfileLike)}
-                        className={`px-3 py-1 rounded-xl text-sm font-medium disabled:opacity-60 ${
-                          c.is_blocked
-                            ? "bg-emerald-600 text-white hover:bg-emerald-700"
-                            : "bg-rose-600 text-white hover:bg-rose-700"
-                        }`}
-                      >
-                        {c.is_blocked ? "Unblock" : "Block"}
-                      </button>
+
+                      {/* Hide Block/Unblock button for admins */}
+                      {c.role !== "admin" && (
+                        <button
+                          disabled={busyId === getId(c)}
+                          onClick={() => handleToggleBlock(c as ProfileLike)}
+                          className={`px-3 py-1 rounded-xl text-sm font-medium disabled:opacity-60 ${
+                            c.is_blocked
+                              ? "bg-emerald-600 text-white hover:bg-emerald-700"
+                              : "bg-rose-600 text-white hover:bg-rose-700"
+                          }`}
+                        >
+                          {c.is_blocked ? "Unblock" : "Block"}
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>

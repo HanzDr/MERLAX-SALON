@@ -101,7 +101,7 @@ const AdminServicesAndStylists = () => {
 
   return (
     <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
-      <h1 className="text-2xl sm:text-3xl font-bold text-center sm:text-left">
+      <h1 className="text-2xl sm:text-3xl font-bold text-center pt-4 sm:text-left">
         Services and Stylists
       </h1>
 

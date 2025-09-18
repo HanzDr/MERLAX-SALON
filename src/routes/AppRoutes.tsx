@@ -52,11 +52,13 @@ const router = createBrowserRouter([
           {
             path: "appointments",
             element: (
-              <AppointmentProvider>
-                <ServicesAndStylistProvider>
-                  <AdminAppointments />
-                </ServicesAndStylistProvider>
-              </AppointmentProvider>
+              <PromoManagementProvider>
+                <AppointmentProvider>
+                  <ServicesAndStylistProvider>
+                    <AdminAppointments />
+                  </ServicesAndStylistProvider>
+                </AppointmentProvider>
+              </PromoManagementProvider>
             ),
           },
           {
@@ -76,7 +78,7 @@ const router = createBrowserRouter([
             ),
           },
           { path: "feedback", element: <AdminFeedback /> },
-          { path: "inventory", element: <AdminFeedback /> }, // Need to update element
+          { path: "inventory", element: <NotFoundPage /> }, // Need to update element
           {
             path: "promoManagement",
             element: (
@@ -102,9 +104,13 @@ const router = createBrowserRouter([
           {
             path: "appointments",
             element: (
-              <ServicesAndStylistProvider>
-                <CustomerAppointments />
-              </ServicesAndStylistProvider>
+              <AppointmentProvider>
+                <PromoManagementProvider>
+                  <ServicesAndStylistProvider>
+                    <CustomerAppointments />
+                  </ServicesAndStylistProvider>
+                </PromoManagementProvider>
+              </AppointmentProvider>
             ),
           },
           { path: "feedback", element: <CustomerFeedback /> },
