@@ -4,6 +4,7 @@ import "react-datepicker/dist/react-datepicker.css";
 import { useServicesAndStylistContext } from "@/features/servicesAndStylist/contexts/ServicesAndStylistContext";
 import { useAppointments } from "@/features/appointments/hooks/useAppointments";
 import { usePromoManagementContext } from "@/features/promo-management/context/promoManagementContext";
+import useAuth from "@/features/auth/hooks/UseAuth";
 import {
   useBookingLimits,
   toISODate,
@@ -45,6 +46,11 @@ const BookAppointments: React.FC<Props> = ({ customerId = null, onBooked }) => {
   const [plan, setPlan] = useState<PlanChoice | null>(null);
   const [isMobile, setIsMobile] = useState<boolean>(false);
 
+  // 👇 NEW: walk-in name fields (admin-only use)
+  const [walkFirst, setWalkFirst] = useState("");
+  const [walkMiddle, setWalkMiddle] = useState("");
+  const [walkLast, setWalkLast] = useState("");
+
   // modal bits
   const [showConfirm, setShowConfirm] = useState(false);
   const [comments, setComments] = useState("");
@@ -59,6 +65,7 @@ const BookAppointments: React.FC<Props> = ({ customerId = null, onBooked }) => {
 
   const { today, maxDate, isSunday } = useBookingLimits();
   const { stylists } = useServicesAndStylistContext();
+  const { role } = useAuth(); // 👈 NEW
 
   const {
     services,
@@ -163,7 +170,15 @@ const BookAppointments: React.FC<Props> = ({ customerId = null, onBooked }) => {
     })();
   }, [stylist, plan, dateISO, getAvailableTimeSlots]);
 
-  const canBook = Boolean(stylist && plan && dateISO && selectedSlot);
+  const isAdmin = role === "admin";
+  const isWalkIn = isAdmin && !customerId; // 👈 our rule: admin booking without a linked customer
+
+  // must-have fields
+  const walkNameOK = !isWalkIn || (walkFirst.trim() && walkLast.trim());
+
+  const canBook = Boolean(
+    stylist && plan && dateISO && selectedSlot && walkNameOK
+  );
 
   const selectedPlanMeta = useMemo(() => {
     if (!plan) return null;
@@ -282,7 +297,6 @@ const BookAppointments: React.FC<Props> = ({ customerId = null, onBooked }) => {
             : ["package", "packages"].includes(raw);
         };
 
-        // Basic filters: active, display, date, type
         const prelim = base.filter(
           (d) =>
             (d.status ?? "Active").toLowerCase() === "active" &&
@@ -296,7 +310,6 @@ const BookAppointments: React.FC<Props> = ({ customerId = null, onBooked }) => {
           return;
         }
 
-        // Eligibility filters (global + per-customer via hook)
         const checked = await Promise.all(
           prelim.map(async (d) => {
             const res = await canUseDiscount({
@@ -339,6 +352,9 @@ const BookAppointments: React.FC<Props> = ({ customerId = null, onBooked }) => {
     setApplicableDiscounts([]);
     setSelectedDiscountId("");
     setDiscountErr(null);
+    setWalkFirst("");
+    setWalkMiddle("");
+    setWalkLast("");
   };
 
   const doConfirm = async () => {
@@ -365,6 +381,14 @@ const BookAppointments: React.FC<Props> = ({ customerId = null, onBooked }) => {
         }
       }
 
+      // If admin walk-in and you want to preserve middle name despite schema, append to comments.
+      const commentsWithMiddle =
+        isWalkIn && walkMiddle.trim()
+          ? `${comments || ""}${
+              comments ? " " : ""
+            }(Middle name: ${walkMiddle.trim()})`
+          : comments || null;
+
       const id = await createAppointment({
         stylist_id: stylist,
         customer_id: customerId ?? null,
@@ -373,10 +397,15 @@ const BookAppointments: React.FC<Props> = ({ customerId = null, onBooked }) => {
         date: dateISO,
         expectedStart_time: selectedSlot.start,
         expectedEnd_time: selectedSlot.end,
-        comments: comments || null,
+        comments: commentsWithMiddle,
         total_amount: null,
         payment_method: null,
         discount_id: selectedDiscountId || null,
+
+        // 👇 NEW: walk-in names (saved to Appointments.firstName/lastName)
+        firstName: isWalkIn ? walkFirst.trim() : undefined,
+        lastName: isWalkIn ? walkLast.trim() : undefined,
+        middleName: isWalkIn ? walkMiddle.trim() : undefined,
       });
       resetAll();
       onBooked?.(id);
@@ -389,6 +418,11 @@ const BookAppointments: React.FC<Props> = ({ customerId = null, onBooked }) => {
   };
 
   const cancelConfirm = () => setShowConfirm(false);
+
+  const fullWalkInName =
+    isWalkIn && (walkFirst || walkMiddle || walkLast)
+      ? [walkFirst, walkMiddle, walkLast].filter(Boolean).join(" ")
+      : null;
 
   return (
     <div
@@ -406,6 +440,84 @@ const BookAppointments: React.FC<Props> = ({ customerId = null, onBooked }) => {
       <h2 style={{ fontSize: "24px", fontWeight: 700, marginBottom: "16px" }}>
         Book An Appointment
       </h2>
+
+      {/* Admin Walk-in Name Inputs */}
+      {isWalkIn && (
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr",
+            gap: 12,
+            padding: "12px",
+            border: "1px dashed #ccc",
+            borderRadius: 10,
+            marginBottom: 16,
+            background: "#fafafa",
+          }}
+        >
+          <div style={{ gridColumn: isMobile ? "auto" : "1 / span 2" }}>
+            <label
+              style={{ fontWeight: 600, display: "block", marginBottom: 6 }}
+            >
+              Walk-in Customer
+            </label>
+            <p style={{ color: "#6b7280", margin: 0, fontSize: 13 }}>
+              Enter the guest’s name. First and last name are required.
+            </p>
+          </div>
+
+          <div>
+            <label style={{ display: "block", marginBottom: 6 }}>
+              First name *
+            </label>
+            <input
+              value={walkFirst}
+              onChange={(e) => setWalkFirst(e.target.value)}
+              placeholder="Juan"
+              style={{
+                width: "100%",
+                padding: "10px",
+                border: "1px solid #ccc",
+                borderRadius: 10,
+              }}
+            />
+          </div>
+
+          <div>
+            <label style={{ display: "block", marginBottom: 6 }}>
+              Middle name
+            </label>
+            <input
+              value={walkMiddle}
+              onChange={(e) => setWalkMiddle(e.target.value)}
+              placeholder="Santos"
+              style={{
+                width: "100%",
+                padding: "10px",
+                border: "1px solid #ccc",
+                borderRadius: 10,
+              }}
+            />
+          </div>
+
+          <div style={{ gridColumn: isMobile ? "auto" : "1 / span 2" }}>
+            <label style={{ display: "block", marginBottom: 6 }}>
+              Last name *
+            </label>
+            <input
+              value={walkLast}
+              onChange={(e) => setWalkLast(e.target.value)}
+              placeholder="Dela Cruz"
+              style={{
+                width: "100%",
+                padding: "10px",
+                border: "1px solid #ccc",
+                borderRadius: 10,
+              }}
+            />
+          </div>
+        </div>
+      )}
 
       {/* Row: Stylist + Plan + Discount */}
       <div
@@ -660,6 +772,11 @@ const BookAppointments: React.FC<Props> = ({ customerId = null, onBooked }) => {
           border: "none",
           cursor: canBook ? "pointer" : "not-allowed",
         }}
+        title={
+          !canBook && isWalkIn && !walkNameOK
+            ? "Enter first and last name for walk-in"
+            : undefined
+        }
       >
         Book Appointment
       </button>
@@ -726,6 +843,17 @@ const BookAppointments: React.FC<Props> = ({ customerId = null, onBooked }) => {
                   rowGap: 8,
                 }}
               >
+                {/* 👇 NEW: show customer name (walk-in) */}
+                {isWalkIn && (
+                  <>
+                    <span>Customer</span>
+                    <span>
+                      {fullWalkInName ||
+                        [walkFirst, walkLast].filter(Boolean).join(" ")}
+                    </span>
+                  </>
+                )}
+
                 <span>Service</span>
                 <span>
                   {selectedPlanMeta?.name ||

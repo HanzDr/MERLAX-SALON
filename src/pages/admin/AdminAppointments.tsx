@@ -12,6 +12,8 @@ import BookAppointments from "@/public-components/BookAppointments";
 import { useAppointments } from "@/features/appointments/hooks/useAppointments";
 import AdminAppointmentHistory from "./AdminAppointmentHistory";
 import useServicesAndStylists from "@/features/servicesAndStylist/hooks/useServicesAndStylist";
+import { supabase } from "@/lib/supabaseclient";
+import { useFeedbackContext } from "@/features/feedback/context/FeedbackContext";
 
 /* ---------------------- Types ---------------------- */
 type Status = "Completed" | "Booked" | "Ongoing" | "Walk-In" | "Cancelled";
@@ -38,11 +40,31 @@ const fmtDateLong = (iso: string) =>
     day: "numeric",
   });
 
-const fmtTime = (hhmm: string) => {
+const fmtTime = (hhmm?: string | null) => {
+  if (!hhmm) return "—";
   const [h, m] = hhmm.split(":").map(Number);
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return "—";
   const ampm = h >= 12 ? "PM" : "AM";
   const hh = h % 12 || 12;
   return `${hh}:${String(m).padStart(2, "0")}${ampm}`;
+};
+
+const to24From12 = (hour12: string, minute: string, ampm: "AM" | "PM") => {
+  let h = Number(hour12);
+  if (ampm === "PM" && h !== 12) h += 12;
+  if (ampm === "AM" && h === 12) h = 0;
+  return `${String(h).padStart(2, "0")}:${minute}`;
+};
+
+const to12From24 = (
+  hhmm?: string | null
+): { h: string; m: string; ap: "AM" | "PM" } => {
+  if (!hhmm) return { h: "12", m: "00", ap: "AM" };
+  const [hStr, m] = hhmm.split(":");
+  let h = Number(hStr);
+  const ap = h >= 12 ? "PM" : "AM";
+  h = h % 12 || 12;
+  return { h: String(h).padStart(2, "0"), m: m ?? "00", ap };
 };
 
 const todayISO = () => {
@@ -119,7 +141,7 @@ function ModalShell({
           </button>
         </div>
         {/* Scrollable content, capped height */}
-        <div className="p-6 max-h-[75vh] overflow-y-auto">{children}</div>
+        <div className="max-h-[75vh] overflow-y-auto p-6">{children}</div>
       </div>
     </div>
   );
@@ -175,94 +197,198 @@ function ConfirmModal({
   );
 }
 
+/* -------------------- View (READ-ONLY) Modal -------------------- */
 function ViewDetailsModal({
   appt,
   onClose,
-  onEdit,
 }: {
   appt: Appt;
   onClose: () => void;
-  onEdit: () => void;
 }) {
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
+
+  const [isCustomerAccount, setIsCustomerAccount] = useState<boolean>(
+    !!appt.customer_id
+  );
+  const [customerDisplayName, setCustomerDisplayName] = useState<string>("");
+  const [paymentMethod, setPaymentMethod] = useState<string>("—");
+  const [actualStart, setActualStart] = useState<string | null>(null);
+  const [actualEnd, setActualEnd] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      try {
+        setLoading(true);
+        setErr(null);
+
+        // Read latest values including actual times
+        const { data: aRow, error: aErr } = await supabase
+          .from("Appointments")
+          .select(
+            "customer_id, firstName, middleName, lastName, payment_method, time_started, time_ended"
+          )
+          .eq("appointment_id", appt.id)
+          .single();
+
+        if (aErr) throw aErr;
+
+        if (!cancelled) {
+          setPaymentMethod(aRow?.payment_method ?? "—");
+          setActualStart(aRow?.time_started ?? null);
+          setActualEnd(aRow?.time_ended ?? null);
+        }
+
+        const cid: string | null = aRow?.customer_id ?? null;
+
+        if (cid) {
+          // Customer account → display full name from Customers table
+          const { data: cRow, error: cErr } = await supabase
+            .from("Customers")
+            .select("firstName, middleName, lastName")
+            .eq("customer_id", cid)
+            .single();
+          if (cErr) throw cErr;
+
+          const full = [cRow?.firstName, cRow?.middleName, cRow?.lastName]
+            .filter(Boolean)
+            .join(" ")
+            .trim();
+
+          if (!cancelled) {
+            setIsCustomerAccount(true);
+            setCustomerDisplayName(full || "Customer");
+          }
+        } else {
+          // Walk-in → display name from the Appointments row
+          const full = [aRow?.firstName, aRow?.middleName, aRow?.lastName]
+            .filter(Boolean)
+            .join(" ")
+            .trim();
+
+          if (!cancelled) {
+            setIsCustomerAccount(false);
+            setCustomerDisplayName(full || "Walk-In");
+          }
+        }
+      } catch (e: any) {
+        if (!cancelled) setErr(e?.message || "Failed to load details.");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [appt.id]);
+
   const peso = (n: number) =>
     `₱${n.toLocaleString("en-PH", { minimumFractionDigits: 2 })}`;
 
   return (
     <ModalShell title="View Service Transaction Details" onClose={onClose}>
+      {/* Times */}
       <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
         <div>
-          <div className="mb-2 text-sm text-gray-500">
-            Booked Starting Time:
-          </div>
+          <div className="mb-2 text-sm text-gray-500">Booked Starting Time</div>
           <div className="text-lg font-semibold">{fmtTime(appt.start)}</div>
         </div>
         <div>
-          <div className="mb-2 text-sm text-gray-500">
-            Expected Ending Time:
-          </div>
+          <div className="mb-2 text-sm text-gray-500">Expected Ending Time</div>
           <div className="text-lg font-semibold">{fmtTime(appt.end)}</div>
         </div>
 
         <div>
-          <div className="mb-2 text-sm text-gray-500">Time Started:</div>
-          <div className="text-lg font-semibold">—</div>
+          <div className="mb-2 text-sm text-gray-500">Time Started</div>
+          <div className="text-lg font-semibold">{fmtTime(actualStart)}</div>
         </div>
         <div>
-          <div className="mb-2 text-sm text-gray-500">Time Ended:</div>
-          <div className="text-lg font-semibold">—</div>
+          <div className="mb-2 text-sm text-gray-500">Time Ended</div>
+          <div className="text-lg font-semibold">{fmtTime(actualEnd)}</div>
         </div>
       </div>
 
-      <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2">
+      {/* Read-only details */}
+      <div className="mt-6 grid grid-cols-1 gap-6 md:grid-cols-2">
+        {/* Stylists */}
         <div>
-          <div className="mb-2 text-sm text-gray-500">Stylist</div>
+          <div className="mb-2 text-sm text-gray-500">Stylists</div>
           <div className="rounded-xl border p-3">
-            <div className="flex items-center gap-2">
-              <div className="rounded-md border px-2 py-1 text-sm">
-                {appt.stylist || "—"}
-              </div>
-            </div>
+            <div className="text-sm">{appt.stylist || "—"}</div>
           </div>
         </div>
+
+        {/* Customer */}
         <div>
           <div className="mb-2 text-sm text-gray-500">Customer Name</div>
-          <div className="rounded-xl border p-3">{appt.customer || "—"}</div>
+          <div className="rounded-xl border p-3">
+            {loading ? (
+              <span className="text-sm text-gray-500">Loading…</span>
+            ) : err ? (
+              <span className="text-sm text-rose-600">{err}</span>
+            ) : (
+              <span className="text-sm">
+                {customerDisplayName || appt.customer || "—"}
+                {isCustomerAccount ? (
+                  <span className="ml-2 rounded-md border px-2 py-0.5 text-xs text-gray-600">
+                    Customer Account
+                  </span>
+                ) : (
+                  <span className="ml-2 rounded-md border px-2 py-0.5 text-xs text-gray-600">
+                    Walk-In
+                  </span>
+                )}
+              </span>
+            )}
+          </div>
         </div>
 
-        <div>
-          <div className="mb-2 text-sm text-gray-500">Service Plan</div>
-          <div className="rounded-xl border p-3">{appt.plan || "—"}</div>
+        {/* Plans */}
+        <div className="md:col-span-2">
+          <div className="mb-2 text-sm text-gray-500">Plans</div>
+          <div className="rounded-xl border p-3">
+            <div className="text-sm">{appt.plan || "—"}</div>
+          </div>
         </div>
-      </div>
 
-      <div className="mt-6 grid grid-cols-1 gap-6 md:grid-cols-2">
+        {/* Status */}
         <div>
           <div className="mb-2 text-sm text-gray-500">Status</div>
           <div className="rounded-xl border p-3">{appt.status}</div>
         </div>
+
+        {/* Payment Method */}
+        <div>
+          <div className="mb-2 text-sm text-gray-500">Payment Method</div>
+          <div className="rounded-xl border p-3">
+            {loading ? "Loading…" : paymentMethod || "—"}
+          </div>
+        </div>
+
+        {/* Total */}
         <div>
           <div className="mb-2 text-sm text-gray-500">Total Amount</div>
           <div className="rounded-xl border p-3 text-lg font-semibold">
             {peso(appt.price || 0)}
           </div>
         </div>
-      </div>
 
-      <div className="mt-8 flex flex-wrap justify-between gap-3">
-        <button
-          onClick={onEdit}
-          className="rounded-xl bg-amber-400 px-4 py-2 font-semibold text-black hover:bg-amber-500"
-        >
-          Modify Details
-        </button>
-        <button className="rounded-xl bg-amber-400 px-4 py-2 font-semibold text-black hover:bg-amber-500">
-          Create Invoice
-        </button>
+        {/* Discount (if you pass discountName in appt) */}
+        <div>
+          <div className="mb-2 text-sm text-gray-500">Discount</div>
+          <div className="rounded-xl border p-3">
+            {appt.discountName ? appt.discountName : "—"}
+          </div>
+        </div>
       </div>
     </ModalShell>
   );
 }
 
+/* -------------------- Modify (EDIT) Modal -------------------- */
 function ModifyDetailsModal({
   appt,
   onClose,
@@ -272,16 +398,15 @@ function ModifyDetailsModal({
   onClose: () => void;
   onSave: (patch: Partial<Appt>) => void;
 }) {
-  // Load stylists (available = display=true)
   const { stylists } = useServicesAndStylists();
 
-  // Load services & packages (available = display=true)
   const {
     services: svcList,
     packages: pkgList,
     loadServices,
     loadPackages,
     updateAppointmentDetails,
+    updateAppointment,
   } = useAppointments();
 
   useEffect(() => {
@@ -289,7 +414,98 @@ function ModifyDetailsModal({
     if (!pkgList.length) void loadPackages();
   }, [svcList.length, pkgList.length, loadServices, loadPackages]);
 
-  // Local state
+  /* ----- Customer name handling (unchanged) ----- */
+  const [isCustomerAccount, setIsCustomerAccount] = useState<boolean>(
+    !!appt.customer_id
+  );
+  const [custLoading, setCustLoading] = useState(true);
+  const [custErr, setCustErr] = useState<string | null>(null);
+  const [customerDisplayName, setCustomerDisplayName] = useState<string>(
+    appt.customer || ""
+  );
+  const [walkFirst, setWalkFirst] = useState("");
+  const [walkMiddle, setWalkMiddle] = useState("");
+  const [walkLast, setWalkLast] = useState("");
+
+  /* ----- NEW: actual start/end time state + loader from DB ----- */
+  const [startH, setStartH] = useState("12");
+  const [startM, setStartM] = useState("00");
+  const [startAP, setStartAP] = useState<"AM" | "PM">("AM");
+
+  const [endH, setEndH] = useState("12");
+  const [endM, setEndM] = useState("00");
+  const [endAP, setEndAP] = useState<"AM" | "PM">("AM");
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        setCustLoading(true);
+        setCustErr(null);
+
+        const { data: aRow, error: aErr } = await supabase
+          .from("Appointments")
+          .select(
+            "customer_id, firstName, middleName, lastName, time_started, time_ended"
+          )
+          .eq("appointment_id", appt.id)
+          .single();
+        if (aErr) throw aErr;
+
+        const cid: string | null = aRow?.customer_id ?? null;
+
+        // init actual time pickers from DB (if any)
+        const s12 = to12From24(aRow?.time_started ?? null);
+        const e12 = to12From24(aRow?.time_ended ?? null);
+        if (!cancelled) {
+          setStartH(s12.h);
+          setStartM(s12.m);
+          setStartAP(s12.ap);
+          setEndH(e12.h);
+          setEndM(e12.m);
+          setEndAP(e12.ap);
+        }
+
+        if (cid) {
+          // Customer account → read-only name from Customers
+          const { data: cRow, error: cErr } = await supabase
+            .from("Customers")
+            .select("firstName, middleName, lastName")
+            .eq("customer_id", cid)
+            .single();
+          if (cErr) throw cErr;
+
+          const name = [cRow?.firstName, cRow?.middleName, cRow?.lastName]
+            .filter(Boolean)
+            .join(" ")
+            .trim();
+
+          if (!cancelled) {
+            setIsCustomerAccount(true);
+            setCustomerDisplayName(name || "Customer");
+          }
+        } else {
+          // Walk-in → load from appointment row
+          if (!cancelled) {
+            setIsCustomerAccount(false);
+            setWalkFirst(aRow?.firstName ?? "");
+            setWalkMiddle(aRow?.middleName ?? "");
+            setWalkLast(aRow?.lastName ?? "");
+          }
+        }
+      } catch (e: any) {
+        if (!custErr && !cancelled)
+          setCustErr(e?.message || "Failed to load customer info.");
+      } finally {
+        if (!cancelled) setCustLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [appt.id]);
+
+  /* ----------------------- existing local state ----------------------- */
   const [payment, setPayment] = useState<"Cash" | "Card" | "GCash">("Cash");
   const [total, setTotal] = useState(appt.price || 0);
   const [discount, setDiscount] = useState(appt.discountName || "");
@@ -300,7 +516,7 @@ function ModifyDetailsModal({
     Array<{ type: "Service" | "Package"; id: string }>
   >([]);
 
-  // Preselect from current appt (by name match) — supports multiple stylists
+  // Preselect stylists by name
   useEffect(() => {
     if (appt.stylist && stylists?.length) {
       const wanted = new Set(
@@ -316,7 +532,7 @@ function ModifyDetailsModal({
     }
   }, [appt.stylist, stylists]);
 
-  // Preselect plans (supports multiple by name)
+  // Preselect plans by name
   useEffect(() => {
     if (!appt.plan || (!svcList.length && !pkgList.length)) return;
     const wanted = appt.plan
@@ -341,7 +557,7 @@ function ModifyDetailsModal({
     if (picks.length) setSelectedPlans(picks);
   }, [appt.plan, svcList, pkgList]);
 
-  // ---------- Options with numeric price (for totals) ----------
+  // Options with numeric price (for totals)
   const planOptions = useMemo(
     () => [
       ...(svcList || []).map((s: any) => {
@@ -388,7 +604,7 @@ function ModifyDetailsModal({
     });
   };
 
-  // ---------- Subtotal & total auto-compute ----------
+  // Subtotal & total auto-compute
   const subtotal = useMemo(() => {
     if (!selectedPlans.length || !planOptions.length) return 0;
     const key = (t: "Service" | "Package", id: string) => `${t}:${id}`;
@@ -408,8 +624,28 @@ function ModifyDetailsModal({
   const peso = (n: number) =>
     `₱${n.toLocaleString("en-PH", { minimumFractionDigits: 2 })}`;
 
-  // Persist everything to DB (amount, payment, stylists, plans)
+  // Persist everything to DB (amount, payment, stylists, plans + walk-in names + actual times)
   const persist = async () => {
+    // Save walk-in names into Appointments
+    if (!isCustomerAccount) {
+      await updateAppointment(appt.id, {
+        firstName: walkFirst.trim() || null,
+        middleName: walkMiddle.trim() || null,
+        lastName: walkLast.trim() || null,
+      } as any);
+    }
+
+    // Save actual start/end times into Appointments
+    const time_started = to24From12(startH, startM, startAP);
+    const time_ended = to24From12(endH, endM, endAP);
+
+    // If you want to allow blank (unset), add small guards, e.g. if both are "12:00 AM" and should be null.
+    await updateAppointment(appt.id, {
+      time_started,
+      time_ended,
+    } as any);
+
+    // Update amount/payment + stylists/plans
     await updateAppointmentDetails({
       appointment_id: appt.id,
       stylist_ids: selectedStylistIds,
@@ -432,11 +668,16 @@ function ModifyDetailsModal({
       })
       .filter(Boolean) as string[];
 
+    const newCustomerDisplay = isCustomerAccount
+      ? customerDisplayName || appt.customer
+      : [walkFirst, walkMiddle, walkLast].filter(Boolean).join(" ").trim();
+
     onSave({
       price: total,
       discountName: discount || null,
       stylist: stylistNames.length ? stylistNames.join(", ") : appt.stylist,
       plan: planNames.length ? planNames.join(", ") : appt.plan,
+      customer: newCustomerDisplay || appt.customer,
     });
   };
 
@@ -455,41 +696,80 @@ function ModifyDetailsModal({
           <div className="text-lg font-semibold">{fmtTime(appt.end)}</div>
         </div>
 
-        {/* Optional: actual time pickers left as-is */}
+        {/* Actual: Time Started */}
         <div>
           <div className="mb-2 text-sm text-gray-500">Time Started</div>
           <div className="flex gap-2">
-            <select className="rounded-lg border px-2 py-1">
-              {Array.from({ length: 12 }, (_, i) => (
-                <option key={i + 1}>{String(i + 1).padStart(2, "0")}</option>
-              ))}
+            <select
+              className="rounded-lg border px-2 py-1"
+              value={startH}
+              onChange={(e) => setStartH(e.target.value)}
+            >
+              {Array.from({ length: 12 }, (_, i) => {
+                const hh = String(i + 1).padStart(2, "0");
+                return (
+                  <option key={hh} value={hh}>
+                    {hh}
+                  </option>
+                );
+              })}
             </select>
-            <select className="rounded-lg border px-2 py-1">
+            <select
+              className="rounded-lg border px-2 py-1"
+              value={startM}
+              onChange={(e) => setStartM(e.target.value)}
+            >
               {["00", "15", "30", "45"].map((m) => (
-                <option key={m}>{m}</option>
+                <option key={m} value={m}>
+                  {m}
+                </option>
               ))}
             </select>
-            <select className="rounded-lg border px-2 py-1">
+            <select
+              className="rounded-lg border px-2 py-1"
+              value={startAP}
+              onChange={(e) => setStartAP(e.target.value as "AM" | "PM")}
+            >
               <option>AM</option>
               <option>PM</option>
             </select>
           </div>
         </div>
 
+        {/* Actual: Time Ended */}
         <div>
           <div className="mb-2 text-sm text-gray-500">Time Ended</div>
           <div className="flex gap-2">
-            <select className="rounded-lg border px-2 py-1">
-              {Array.from({ length: 12 }, (_, i) => (
-                <option key={i + 1}>{String(i + 1).padStart(2, "0")}</option>
-              ))}
+            <select
+              className="rounded-lg border px-2 py-1"
+              value={endH}
+              onChange={(e) => setEndH(e.target.value)}
+            >
+              {Array.from({ length: 12 }, (_, i) => {
+                const hh = String(i + 1).padStart(2, "0");
+                return (
+                  <option key={hh} value={hh}>
+                    {hh}
+                  </option>
+                );
+              })}
             </select>
-            <select className="rounded-lg border px-2 py-1">
+            <select
+              className="rounded-lg border px-2 py-1"
+              value={endM}
+              onChange={(e) => setEndM(e.target.value)}
+            >
               {["00", "15", "30", "45"].map((m) => (
-                <option key={m}>{m}</option>
+                <option key={m} value={m}>
+                  {m}
+                </option>
               ))}
             </select>
-            <select className="rounded-lg border px-2 py-1">
+            <select
+              className="rounded-lg border px-2 py-1"
+              value={endAP}
+              onChange={(e) => setEndAP(e.target.value as "AM" | "PM")}
+            >
               <option>AM</option>
               <option>PM</option>
             </select>
@@ -502,7 +782,7 @@ function ModifyDetailsModal({
         {/* Stylists checklist (scrollable) */}
         <div>
           <div className="mb-2 text-sm text-gray-500">Stylists</div>
-          <div className="rounded-xl border p-3 max-h-64 md:max-h-80 overflow-auto">
+          <div className="max-h-64 overflow-auto rounded-xl border p-3 md:max-h-80">
             {stylists?.length ? (
               <div className="space-y-2">
                 {stylists.map((s: any) => (
@@ -525,14 +805,45 @@ function ModifyDetailsModal({
           </div>
         </div>
 
-        {/* Customer name (kept) */}
+        {/* Customer Name: read-only for customers; editable for walk-ins */}
         <div>
           <div className="mb-2 text-sm text-gray-500">Customer Name</div>
-          <input
-            className="w-full rounded-xl border px-3 py-2"
-            defaultValue={appt.customer}
-            readOnly
-          />
+          {custLoading ? (
+            <div className="rounded-xl border p-3 text-sm text-gray-500">
+              Loading…
+            </div>
+          ) : custErr ? (
+            <div className="rounded-xl border p-3 text-sm text-rose-600">
+              {custErr}
+            </div>
+          ) : isCustomerAccount ? (
+            <input
+              className="w-full rounded-xl border px-3 py-2"
+              value={customerDisplayName}
+              readOnly
+            />
+          ) : (
+            <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
+              <input
+                className="w-full rounded-xl border px-3 py-2"
+                placeholder="First name"
+                value={walkFirst}
+                onChange={(e) => setWalkFirst(e.target.value)}
+              />
+              <input
+                className="w-full rounded-xl border px-3 py-2"
+                placeholder="Middle name"
+                value={walkMiddle}
+                onChange={(e) => setWalkMiddle(e.target.value)}
+              />
+              <input
+                className="w-full rounded-xl border px-3 py-2"
+                placeholder="Last name"
+                value={walkLast}
+                onChange={(e) => setWalkLast(e.target.value)}
+              />
+            </div>
+          )}
         </div>
 
         {/* Plans (Services & Packages) checklist */}
@@ -543,7 +854,7 @@ function ModifyDetailsModal({
           <div className="rounded-xl border">
             <div className="grid grid-cols-1 md:grid-cols-2">
               {/* Left: options list (scrollable) */}
-              <div className="p-3 space-y-2 max-h-64 md:max-h-80 overflow-auto">
+              <div className="max-h-64 space-y-2 overflow-auto p-3 md:max-h-80">
                 {planOptions.length ? (
                   planOptions.map((opt) => (
                     <label
@@ -578,8 +889,8 @@ function ModifyDetailsModal({
               </div>
 
               {/* Right: Products Used column (placeholder) */}
-              <div className="border-t md:border-t-0 md:border-l p-3 space-y-2">
-                <div className="text-sm font-semibold text-center md:text-left">
+              <div className="space-y-2 border-t p-3 md:border-l md:border-t-0">
+                <div className="text-center text-sm font-semibold md:text-left">
                   Products Used
                 </div>
                 <label className="flex items-center gap-2">
@@ -593,9 +904,9 @@ function ModifyDetailsModal({
             </div>
           </div>
           <p className="mt-2 text-xs text-gray-500">
-            (Saving will update Appointments.total_amount/payment and replace
-            links in <code>AppointmentStylists</code> and{" "}
-            <code>AppointmentServicePlan</code>.)
+            (Saving will update total/payment, stylists/plans, and actual
+            start/end times. For walk-ins, it also saves First/Middle/Last
+            Name.)
           </p>
         </div>
 
@@ -621,7 +932,7 @@ function ModifyDetailsModal({
         <div>
           <div className="mb-2 text-sm text-gray-500">Total Amount</div>
           <input
-            className="w-full rounded-xl border px-3 py-2 text-right font-semibold bg-gray-50"
+            className="w-full rounded-xl border bg-gray-50 px-3 py-2 text-right font-semibold"
             value={total}
             readOnly
           />
@@ -674,6 +985,7 @@ function ModifyDetailsModal({
 const AdminAppointments: React.FC = () => {
   const { loadUpcomingAdminAppointments, updateAppointment } =
     useAppointments();
+  const { createFeedbackForAppointment } = useFeedbackContext();
   const { days } = useThreeWeekMonSat();
 
   const [tab, setTab] = useState<"Upcoming" | "History">("Upcoming");
@@ -684,10 +996,8 @@ const AdminAppointments: React.FC = () => {
   const [viewing, setViewing] = useState<Appt | null>(null);
   const [editing, setEditing] = useState<Appt | null>(null);
 
-  // Create Service Transaction modal (wraps BookAppointments)
   const [createOpen, setCreateOpen] = useState(false);
 
-  // Confirmation modal state
   const [confirm, setConfirm] = useState<
     { type: "start"; appt: Appt } | { type: "cancel"; appt: Appt } | null
   >(null);
@@ -792,11 +1102,17 @@ const AdminAppointments: React.FC = () => {
   };
 
   const handleMarkComplete = async (a: Appt) => {
+    // optimistic UI
     patchLocal(a.id, { status: "Completed" });
     try {
       await updateAppointment(a.id, { status: "Completed" as any });
-    } catch {
+
+      // create a feedback shell for this appointment (if not already existing)
+      await createFeedbackForAppointment(a.id);
+    } catch (err) {
+      // revert on failure
       patchLocal(a.id, { status: "Ongoing" });
+      console.error("Failed to complete & create feedback:", err);
     }
   };
 
@@ -809,22 +1125,12 @@ const AdminAppointments: React.FC = () => {
     }
   };
 
-  const handleUndo = async (a: Appt) => {
-    patchLocal(a.id, { status: "Booked" });
-    try {
-      await updateAppointment(a.id, { status: "Booked" as any });
-    } catch {
-      patchLocal(a.id, { status: "Completed" });
-    }
-  };
-
   /** Color coding */
   const tileBg = (a: Appt) => {
     if (a.status === "Cancelled") return "bg-rose-50";
     if (a.status === "Completed") return "bg-green-50";
     if (a.status === "Ongoing") return "bg-fuchsia-50";
     return "bg-blue-50"; // Booked / Walk-In / others
-    // blue states are: Booked, Walk-In, etc.
   };
 
   /** Button cluster */
@@ -840,13 +1146,6 @@ const AdminAppointments: React.FC = () => {
             onClick={() => setViewing(a)}
           >
             View Details
-          </button>
-          <button
-            className="rounded-lg bg-black px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90"
-            onClick={() => handleUndo(a)}
-          >
-            <Undo2 className="mr-1 inline h-3 w-3" />
-            Undo
           </button>
         </div>
       );
@@ -1023,14 +1322,7 @@ const AdminAppointments: React.FC = () => {
 
       {/* Modals */}
       {viewing && (
-        <ViewDetailsModal
-          appt={viewing}
-          onClose={() => setViewing(null)}
-          onEdit={() => {
-            setEditing(viewing);
-            setViewing(null);
-          }}
-        />
+        <ViewDetailsModal appt={viewing} onClose={() => setViewing(null)} />
       )}
 
       {editing && (
@@ -1052,7 +1344,7 @@ const AdminAppointments: React.FC = () => {
               customerId={null}
               onBooked={async () => {
                 setCreateOpen(false);
-                await refreshAll(); // soft refresh; no page reload
+                await refreshAll();
               }}
             />
           </div>

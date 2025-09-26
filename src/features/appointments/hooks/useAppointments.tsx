@@ -338,23 +338,40 @@ export function useAppointments() {
       total_amount?: number | null;
       payment_method?: PaymentMethod | null;
       discount_id?: string | null;
+
+      // 👇 NEW: walk-in names (schema has firstName, lastName)
+      firstName?: string;
+      lastName?: string;
+      middleName?: string;
     }) => {
+      const isWalkIn = !args.customer_id;
+
+      const insertPayload: any = {
+        date: args.date,
+        expectedStart_time: args.expectedStart_time,
+        expectedEnd_time: args.expectedEnd_time,
+        comments: args.comments ?? null,
+        total_amount: args.total_amount ?? null,
+        payment_method: args.payment_method ?? null,
+        status: isWalkIn ? "Walk-In" : "Booked", // 👈 distinguish in DB
+        display: true,
+        customer_id: args.customer_id ?? null,
+      };
+
+      // Only populate name fields for walk-ins
+      if (isWalkIn) {
+        if (args.firstName) insertPayload.firstName = args.firstName;
+        if (args.lastName) insertPayload.lastName = args.lastName;
+        if (args.middleName) insertPayload.middleName = args.middleName;
+      }
+
       const { data: appt, error } = await supabase
         .from("Appointments")
-        .insert({
-          date: args.date,
-          expectedStart_time: args.expectedStart_time,
-          expectedEnd_time: args.expectedEnd_time,
-          comments: args.comments ?? null,
-          total_amount: args.total_amount ?? null,
-          payment_method: args.payment_method ?? null,
-          status: "Booked",
-          display: true,
-          customer_id: args.customer_id ?? null,
-        })
+        .insert(insertPayload)
         .select("appointment_id")
         .single();
       if (error) throw error;
+
       const appointmentId = appt.appointment_id;
 
       // singular AppointmentStylists

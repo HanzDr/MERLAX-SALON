@@ -28,10 +28,11 @@ import RoleProtectedRoute from "@/public-components/RoleProtectedRoute";
 import { ServicesAndStylistProvider } from "@/features/servicesAndStylist/contexts/ServicesAndStylistContext";
 import { PromoManagementProvider } from "@/features/promo-management/context/promoManagementContext";
 import { AppointmentProvider } from "@/features/appointments/context/AppointmentContext";
+import { FeedbackProvider } from "@/features/feedback/context/FeedbackContext";
 const router = createBrowserRouter([
   {
     path: "/",
-    element: <RootLayout />, // contains <AuthProvider> and <Outlet />
+    element: <RootLayout />,
     children: [
       // Public auth routes
       { path: "auth/callback", element: <AuthCallback /> },
@@ -53,11 +54,13 @@ const router = createBrowserRouter([
             path: "appointments",
             element: (
               <PromoManagementProvider>
-                <AppointmentProvider>
-                  <ServicesAndStylistProvider>
-                    <AdminAppointments />
-                  </ServicesAndStylistProvider>
-                </AppointmentProvider>
+                <FeedbackProvider>
+                  <AppointmentProvider>
+                    <ServicesAndStylistProvider>
+                      <AdminAppointments />
+                    </ServicesAndStylistProvider>
+                  </AppointmentProvider>
+                </FeedbackProvider>
               </PromoManagementProvider>
             ),
           },
@@ -77,7 +80,14 @@ const router = createBrowserRouter([
               </PaginationProvider>
             ),
           },
-          { path: "feedback", element: <AdminFeedback /> },
+          {
+            path: "feedback",
+            element: (
+              <FeedbackProvider>
+                <AdminFeedback />
+              </FeedbackProvider>
+            ),
+          },
           { path: "inventory", element: <NotFoundPage /> }, // Need to update element
           {
             path: "promoManagement",

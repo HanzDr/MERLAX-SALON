@@ -1,309 +1,284 @@
-// src/pages/admin/AdminFeedback.tsx
-"use client";
+import { useMemo, useState, useEffect } from "react";
+import CategorizeForm from "@/features/feedback/components/categorize-feedback-form";
+import FeedbackCard from "@/features/feedback/components/feedback-card";
+import FeedbackForm from "@/features/feedback/components/respond-feedback-form";
+import { useFeedbackContext } from "@/features/feedback/context/FeedbackContext";
+import type { FeedbackCategory } from "@/features/feedback/utils/feedback-types";
+import type {
+  feedbackCategorizeData,
+  feedbackResponseData,
+} from "@/validation/FeedbackSchema";
 
-import React, { useMemo, useState } from "react";
-import { Search, Trash2, Star } from "lucide-react";
+/* ------------------------- Types ------------------------- */
+type ModalState =
+  | { type: "CATEGORIZE"; feedbackId: string }
+  | { type: "RESPOND"; feedbackId: string }
+  | null;
 
-type Category = "Positive" | "Negative" | "Neutral" | "Suggestion";
-type TabKey = "all" | "unresponded" | "responded";
+type SortKey = "date-desc" | "date-asc" | "rating-desc" | "rating-asc";
 
-type FeedbackItem = {
-  id: string;
-  customer: string;
-  dateISO: string; // "2025-04-02"
-  text: string;
-  rating: number; // 1..5
-  category: Category;
-  responded: boolean;
-};
+/* --------------------- Component --------------------- */
+export default function AdminFeedback() {
+  const { feedback, updateFeedback /* optionally: loading, error */ } =
+    useFeedbackContext();
 
-const seedData: FeedbackItem[] = [
-  {
-    id: "1",
-    customer: "Mika Regalado",
-    dateISO: "2025-04-02",
-    text: "Service was amazing, but there was a delay",
-    rating: 4,
-    category: "Positive",
-    responded: false,
-  },
-  {
-    id: "2",
-    customer: "Mica  Dims",
-    dateISO: "2025-04-03",
-    text: "Exceptional service! The attention to detail was outstanding",
-    rating: 4,
-    category: "Neutral",
-    responded: false,
-  },
-  {
-    id: "3",
-    customer: "Luis Palparan",
-    dateISO: "2025-04-03",
-    text: "The waiting time was too long today, and the result wasn't what I expected.",
-    rating: 2,
-    category: "Negative",
-    responded: false,
-  },
-  {
-    id: "4",
-    customer: "Benjamin Asjali",
-    dateISO: "2025-02-14",
-    text: "The staff was kind, but maybe improving the waiting time and confirming the desired result beforehand could make the experience even better!",
-    rating: 3,
-    category: "Suggestion",
-    responded: true,
-  },
-];
+  const [modal, setModal] = useState<ModalState>(null);
 
-const categoryColors: Record<Category, string> = {
-  Positive: "bg-emerald-100 text-emerald-700",
-  Negative: "bg-rose-100 text-rose-700",
-  Neutral: "bg-gray-200 text-gray-700",
-  Suggestion: "bg-violet-100 text-violet-700",
-};
+  // Toolbar state
+  const [q, setQ] = useState("");
+  const [category, setCategory] = useState<FeedbackCategory | "ALL">("ALL");
+  const [minRating, setMinRating] = useState<number | "ALL">("ALL");
+  const [sortBy, setSortBy] = useState<SortKey>("date-desc");
 
-function formatMDY(iso: string) {
-  const d = new Date(iso);
-  return d.toLocaleDateString(undefined, {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  });
-}
+  // Simple client-side pagination
+  const PAGE_SIZE = 8;
+  const [page, setPage] = useState(1);
 
-function Stars({ value }: { value: number }) {
-  const full = Math.max(0, Math.min(5, Math.round(value)));
-  return (
-    <div className="flex items-center gap-1">
-      {Array.from({ length: 5 }).map((_, i) => {
-        const active = i < full;
-        return (
-          <Star
-            key={i}
-            className={`h-4 w-4 ${active ? "text-amber-400" : "text-gray-300"}`}
-            fill={active ? "currentColor" : "none"}
-          />
-        );
-      })}
-    </div>
-  );
-}
+  useEffect(() => {
+    // Reset to page 1 on any filter/search change
+    setPage(1);
+  }, [q, category, minRating, sortBy]);
 
-function Tag({
-  children,
-  color,
-}: {
-  children: React.ReactNode;
-  color: string;
-}) {
-  return (
-    <span
-      className={`inline-flex items-center rounded-full px-2 py-1 text-xs font-medium ${color}`}
-    >
-      {children}
-    </span>
-  );
-}
+  const onClose = () => setModal(null);
 
-const TabButton = ({
-  active,
-  children,
-  onClick,
-}: {
-  active: boolean;
-  children: React.ReactNode;
-  onClick: () => void;
-}) => (
-  <button
-    onClick={onClick}
-    className={`rounded-full px-4 py-2 text-sm font-medium transition-colors ${
-      active
-        ? "bg-amber-300 text-gray-900"
-        : "text-gray-600 hover:text-gray-900"
-    }`}
-  >
-    {children}
-  </button>
-);
+  const handleSaveCategorize = async (values: feedbackCategorizeData) => {
+    if (!modal || modal.type !== "CATEGORIZE") return;
+    await updateFeedback({
+      kind: "categorize",
+      feedbackId: modal.feedbackId,
+      category: values.category as FeedbackCategory,
+    });
+    setModal(null);
+  };
 
-const AdminFeedback: React.FC = () => {
-  const [items, setItems] = useState<FeedbackItem[]>(seedData);
-  const [tab, setTab] = useState<TabKey>("all");
-  const [category, setCategory] = useState<"All" | Category>("All");
-  const [query, setQuery] = useState("");
+  const handleSaveRespond = async (values: feedbackResponseData) => {
+    if (!modal || modal.type !== "RESPOND") return;
+    const comment = (values.comment ?? "").trim();
+    await updateFeedback({
+      kind: "respond",
+      feedbackId: modal.feedbackId,
+      comment,
+    });
+    setModal(null);
+  };
 
   const filtered = useMemo(() => {
-    return items
-      .filter((f) => {
-        if (tab === "responded") return f.responded;
-        if (tab === "unresponded") return !f.responded;
-        return true;
-      })
-      .filter((f) => (category === "All" ? true : f.category === category))
-      .filter((f) => {
-        if (!query.trim()) return true;
-        const q = query.toLowerCase();
+    let list = feedback ?? [];
+
+    // Search over name + description
+    const qLower = q.trim().toLowerCase();
+    if (qLower) {
+      list = list.filter((f) => {
+        const name = [f.firstName, f.middleName, f.lastName]
+          .filter(Boolean)
+          .join(" ");
         return (
-          f.customer.toLowerCase().includes(q) ||
-          f.text.toLowerCase().includes(q)
+          name.toLowerCase().includes(qLower) ||
+          (f.description ?? "").toLowerCase().includes(qLower)
         );
       });
-  }, [items, tab, category, query]);
+    }
 
-  function remove(id: string) {
-    setItems((prev) => prev.filter((x) => x.id !== id));
-  }
+    // Category filter
+    if (category !== "ALL") {
+      list = list.filter((f) => (f.category ?? null) === category);
+    }
 
-  function toggleResponded(id: string) {
-    setItems((prev) =>
-      prev.map((x) => (x.id === id ? { ...x, responded: !x.responded } : x))
-    );
-  }
+    // Min rating
+    if (minRating !== "ALL") {
+      list = list.filter((f) => (Number(f.rating) || 0) >= Number(minRating));
+    }
 
-  function recategorize(id: string) {
-    // simple demo action — cycle through categories
-    setItems((prev) =>
-      prev.map((x) =>
-        x.id === id
-          ? {
-              ...x,
-              category:
-                x.category === "Positive"
-                  ? "Neutral"
-                  : x.category === "Neutral"
-                  ? "Suggestion"
-                  : x.category === "Suggestion"
-                  ? "Negative"
-                  : "Positive",
-            }
-          : x
-      )
-    );
-  }
+    // Sorting
+    list = [...list].sort((a, b) => {
+      const ra = Number(a.rating) || 0;
+      const rb = Number(b.rating) || 0;
+      const da = new Date(a.date).getTime();
+      const db = new Date(b.date).getTime();
+
+      switch (sortBy) {
+        case "rating-desc":
+          return rb - ra || db - da;
+        case "rating-asc":
+          return ra - rb || db - da;
+        case "date-asc":
+          return da - db;
+        case "date-desc":
+        default:
+          return db - da;
+      }
+    });
+
+    return list;
+  }, [feedback, q, category, minRating, sortBy]);
+
+  const total = filtered.length;
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const pageItems = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   return (
-    <div className="mx-auto max-w-6xl px-4 py-6">
-      {/* Title */}
-      <h1 className="text-3xl font-semibold tracking-tight text-gray-900">
-        Feedback Management
-      </h1>
+    <div className="w-full max-w-6xl mx-auto p-6">
+      {/* Header */}
+      <header className="mb-6">
+        <h1 className="text-2xl md:text-3xl font-bold">Feedback</h1>
+        <p className="text-sm text-gray-500">
+          Review, categorize, and respond to customer feedback.
+        </p>
+      </header>
 
       {/* Toolbar */}
-      <div className="mt-6 flex flex-wrap items-center gap-3">
-        {/* Category filter */}
-        <div className="flex items-center gap-2 rounded-full border border-gray-300 px-3 py-2">
-          <span className="inline-block h-4 w-4 rounded-sm border border-gray-400" />
+      <div className="mb-5 grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
+        {/* Search */}
+        <div className="md:col-span-5">
+          <label className="block text-xs font-medium text-gray-600 mb-1">
+            Search
+          </label>
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search by name or description…"
+            className="w-full rounded-xl border px-3 py-2"
+          />
+        </div>
+
+        {/* Category */}
+        <div className="md:col-span-3">
+          <label className="block text-xs font-medium text-gray-600 mb-1">
+            Category
+          </label>
           <select
             value={category}
             onChange={(e) => setCategory(e.target.value as any)}
-            className="bg-transparent text-sm text-gray-800 focus:outline-none"
+            className="w-full rounded-xl border px-3 py-2"
           >
-            <option>All</option>
-            <option>Positive</option>
-            <option>Neutral</option>
-            <option>Negative</option>
-            <option>Suggestion</option>
+            <option value="ALL">All</option>
+            <option value="COMPLIMENT">Compliment</option>
+            <option value="COMPLAINT">Complaint</option>
+            <option value="SUGGESTION">Suggestion</option>
+            <option value="OTHER">Other</option>
           </select>
         </div>
 
-        {/* Search */}
-        <div className="relative">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search..."
-            className="w-64 rounded-full border border-gray-300 py-2 pl-9 pr-3 text-sm outline-none placeholder:text-gray-400 focus:ring-2 focus:ring-amber-300"
-          />
+        {/* Min Rating */}
+        <div className="md:col-span-2">
+          <label className="block text-xs font-medium text-gray-600 mb-1">
+            Min Rating
+          </label>
+          <select
+            value={minRating}
+            onChange={(e) =>
+              setMinRating(
+                e.target.value === "ALL" ? "ALL" : Number(e.target.value)
+              )
+            }
+            className="w-full rounded-xl border px-3 py-2"
+          >
+            <option value="ALL">All</option>
+            {[5, 4, 3, 2, 1].map((r) => (
+              <option key={r} value={r}>
+                {r}+
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {/* Sort */}
+        <div className="md:col-span-2">
+          <label className="block text-xs font-medium text-gray-600 mb-1">
+            Sort
+          </label>
+          <select
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value as SortKey)}
+            className="w-full rounded-xl border px-3 py-2"
+          >
+            <option value="date-desc">Newest first</option>
+            <option value="date-asc">Oldest first</option>
+            <option value="rating-desc">Highest rating</option>
+            <option value="rating-asc">Lowest rating</option>
+          </select>
         </div>
       </div>
 
-      {/* Tabs */}
-      <div className="mt-6 flex items-center gap-4">
-        <TabButton active={tab === "all"} onClick={() => setTab("all")}>
-          All Feedback
-        </TabButton>
-        <TabButton
-          active={tab === "unresponded"}
-          onClick={() => setTab("unresponded")}
-        >
-          Unresponded
-        </TabButton>
-        <TabButton
-          active={tab === "responded"}
-          onClick={() => setTab("responded")}
-        >
-          Responded
-        </TabButton>
-      </div>
-
-      {/* Cards grid */}
-      <div className="mt-6 grid grid-cols-1 gap-5 md:grid-cols-2">
-        {filtered.map((f) => (
-          <div
-            key={f.id}
-            className="rounded-xl border border-gray-300 p-5 shadow-sm"
-          >
-            {/* Header row */}
-            <div className="flex items-start justify-between">
-              <div>
-                <h3 className="text-lg font-semibold text-gray-900">
-                  {f.customer}
-                </h3>
-                <p className="text-xs text-gray-500">{formatMDY(f.dateISO)}</p>
-              </div>
-              <div className="flex items-center gap-2">
-                <Stars value={f.rating} />
-                {/* outline star on far right (bookmark-ish) */}
-                <Star className="h-4 w-4 text-gray-400" />
-              </div>
-            </div>
-
-            {/* Body */}
-            <p className="mt-3 text-sm leading-6 text-gray-800">{f.text}</p>
-
-            {/* Tag */}
-            <div className="mt-3">
-              <Tag color={categoryColors[f.category]}>{f.category}</Tag>
-            </div>
-
-            {/* Actions */}
-            <div className="mt-4 flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <button
-                  onClick={() => recategorize(f.id)}
-                  className="rounded-md border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-800 hover:bg-gray-50"
-                >
-                  Categorize
-                </button>
-                <button
-                  onClick={() => toggleResponded(f.id)}
-                  className="rounded-md bg-amber-400 px-3 py-1.5 text-sm font-semibold text-gray-900 hover:bg-amber-300"
-                >
-                  {f.responded ? "Unrespond" : "Respond"}
-                </button>
-              </div>
-              <button
-                onClick={() => remove(f.id)}
-                className="rounded p-1 text-rose-600 hover:bg-rose-50"
-                aria-label="Delete feedback"
-                title="Delete"
-              >
-                <Trash2 className="h-5 w-5" />
-              </button>
-            </div>
-          </div>
-        ))}
-
-        {filtered.length === 0 && (
-          <div className="col-span-full rounded-xl border border-dashed border-gray-300 p-10 text-center text-sm text-gray-500">
-            No feedback found.
+      {/* Meta line */}
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2 text-sm text-gray-600">
+        <span>
+          Showing <b>{pageItems.length}</b> of <b>{total}</b> feedback
+          {q || category !== "ALL" || minRating !== "ALL" ? " (filtered)" : ""}
+        </span>
+        {totalPages > 1 && (
+          <div className="inline-flex items-center gap-2">
+            <button
+              className="rounded-lg border px-3 py-1 disabled:opacity-50"
+              disabled={page <= 1}
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+            >
+              Prev
+            </button>
+            <span>
+              Page <b>{page}</b> / {totalPages}
+            </span>
+            <button
+              className="rounded-lg border px-3 py-1 disabled:opacity-50"
+              disabled={page >= totalPages}
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+            >
+              Next
+            </button>
           </div>
         )}
       </div>
+
+      {/* Content */}
+      {pageItems.length === 0 ? (
+        <div className="rounded-2xl border border-dashed p-12 text-center">
+          <div className="text-lg font-semibold">No feedback found</div>
+          <p className="mt-1 text-sm text-gray-500">
+            Try clearing filters or changing the search.
+          </p>
+        </div>
+      ) : (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {pageItems.map((f) => (
+            <FeedbackCard
+              key={f.feedbackId}
+              feedbackId={f.feedbackId}
+              firstName={f.firstName}
+              middleName={f.middleName}
+              lastName={f.lastName}
+              date={f.date}
+              description={f.description}
+              category={f.category}
+              rating={f.rating}
+              onCategorize={() =>
+                setModal({ type: "CATEGORIZE", feedbackId: f.feedbackId })
+              }
+              onRespond={() =>
+                setModal({ type: "RESPOND", feedbackId: f.feedbackId })
+              }
+            />
+          ))}
+        </div>
+      )}
+
+      {/* Modals */}
+      {modal?.type === "CATEGORIZE" && (
+        <CategorizeForm
+          key={modal.feedbackId}
+          feedbackId={modal.feedbackId}
+          onClose={onClose}
+          onSave={handleSaveCategorize}
+        />
+      )}
+
+      {modal?.type === "RESPOND" && (
+        <FeedbackForm
+          key={modal.feedbackId}
+          feedbackId={modal.feedbackId}
+          onClose={onClose}
+          onSave={handleSaveRespond}
+        />
+      )}
     </div>
   );
-};
-
-export default AdminFeedback;
+}
