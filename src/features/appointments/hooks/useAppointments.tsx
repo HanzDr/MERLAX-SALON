@@ -878,6 +878,28 @@ export function useAppointments() {
     return { items, total: count ?? items.length };
   }
 
+  // useAppointments.ts
+  const loadUpcomingCustomerAppointments = useCallback(
+    async (customer_id: string) => {
+      const todayISO = new Date().toISOString().slice(0, 10);
+      const { data, error } = await supabase
+        .from("Appointments")
+        .select(
+          "appointment_id,date,expectedStart_time,expectedEnd_time,status,display"
+        )
+        .eq("customer_id", customer_id)
+        .eq("display", true)
+        .eq("status", "Booked") // ← key line
+        .gte("date", todayISO)
+        .order("date", { ascending: true })
+        .order("expectedStart_time", { ascending: true });
+
+      if (error) throw error;
+      return data ?? [];
+    },
+    []
+  );
+
   /* ------------------------------ Return ------------------------------ */
   return {
     services,
@@ -890,6 +912,7 @@ export function useAppointments() {
     updateAppointment,
     updateAppointmentDetails,
     softDeleteAppointment,
+    loadUpcomingCustomerAppointments,
 
     // Discounts
     canUseDiscount,

@@ -1102,17 +1102,21 @@ const AdminAppointments: React.FC = () => {
   };
 
   const handleMarkComplete = async (a: Appt) => {
-    // optimistic UI
     patchLocal(a.id, { status: "Completed" });
     try {
       await updateAppointment(a.id, { status: "Completed" as any });
-
-      // create a feedback shell for this appointment (if not already existing)
-      await createFeedbackForAppointment(a.id);
     } catch (err) {
-      // revert on failure
+      // Only revert if the status update failed
       patchLocal(a.id, { status: "Ongoing" });
-      console.error("Failed to complete & create feedback:", err);
+      console.error("Failed to set Completed:", err);
+      return;
+    }
+
+    // Fire-and-forget feedback creation; never revert status because of this
+    if (a.customer_id) {
+      createFeedbackForAppointment(a.id).catch((e) => {
+        console.error("Feedback creation failed (non-blocking):", e);
+      });
     }
   };
 

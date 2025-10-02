@@ -34,17 +34,15 @@ export type FeedbackFormProps = {
   onSave: (data: feedbackResponseData) => Promise<void> | void; // sends { comment?: string | null }
 };
 
-// Discriminated union for updater
-export type UpdateCategory = {
-  kind: "categorize";
-  feedbackId: string;
-  category: FeedbackCategory;
-};
-
-export type UpdateRespond = {
-  kind: "respond";
-  feedbackId: string;
-  comment: string; // normalized to string by the page handler
-};
-
-export type UpdatePayload = UpdateCategory | UpdateRespond;
+export type UpdatePayload =
+  | {
+      kind: "categorize";
+      feedbackId: string;
+      category: FeedbackCategory | null;
+    }
+  | {
+      kind: "respond";
+      feedbackId: string;
+      comment: string | null;
+      respondAs?: "admin" | "customer"; // default "admin"
+    };

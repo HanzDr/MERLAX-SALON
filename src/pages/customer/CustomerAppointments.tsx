@@ -11,8 +11,8 @@ type ApptCard = {
   date: string; // YYYY-MM-DD
   expectedStart_time: string; // HH:MM
   expectedEnd_time: string; // HH:MM
-  comments: string | null;
   status: string | null;
+  comments?: string | null; // may be undefined until we fetch on demand
 };
 
 type DetailMeta = { label: string; value: string };
@@ -55,12 +55,6 @@ const fmtDateLong = (iso: string) => {
     day: "numeric",
   });
 };
-const todayISO = () => {
-  const now = new Date();
-  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(
-    now.getDate()
-  )}`;
-};
 
 const CustomerAppointments: React.FC = () => {
   const [isMobile, setIsMobile] = useState<boolean>(false);
@@ -81,7 +75,8 @@ const CustomerAppointments: React.FC = () => {
   const [detailsLoading, setDetailsLoading] = useState(false);
 
   const { user } = useAuthContext();
-  const { updateAppointment } = useAppointments();
+  const { updateAppointment, loadUpcomingCustomerAppointments } =
+    useAppointments();
 
   /* responsive */
   useEffect(() => {
@@ -91,7 +86,7 @@ const CustomerAppointments: React.FC = () => {
     return () => window.removeEventListener("resize", handleResize);
   }, []);
 
-  /* load appointments for this customer */
+  /* load upcoming (Booked-only) appointments for this customer */
   const loadMine = useCallback(async () => {
     if (!user?.id) {
       setAppts([]);
@@ -101,35 +96,16 @@ const CustomerAppointments: React.FC = () => {
       setLoading(true);
       setErr(null);
 
-      const { data, error } = await supabase
-        .from("Appointments")
-        .select(
-          "appointment_id,date,expectedStart_time,expectedEnd_time,comments,status,display,customer_id"
-        )
-        .eq("customer_id", user.id)
-        .eq("display", true);
-
-      if (error) throw error;
-
-      const today = todayISO();
-      const cleaned: ApptCard[] = (data ?? [])
-        .filter(
-          (r: any) => (r.status ?? "Booked").toLowerCase() !== "cancelled"
-        )
-        .filter((r: any) => r.date >= today)
-        .map((r: any) => ({
-          appointment_id: r.appointment_id,
-          date: r.date,
-          expectedStart_time: takeHHMM(r.expectedStart_time),
-          expectedEnd_time: takeHHMM(r.expectedEnd_time),
-          comments: r.comments ?? null,
-          status: r.status ?? null,
-        }))
-        .sort((a, b) =>
-          `${a.date} ${a.expectedStart_time}`.localeCompare(
-            `${b.date} ${b.expectedStart_time}`
-          )
-        );
+      const rows = await loadUpcomingCustomerAppointments(user.id);
+      const cleaned: ApptCard[] = (rows ?? []).map((r: any) => ({
+        appointment_id: r.appointment_id,
+        date: r.date,
+        expectedStart_time: takeHHMM(r.expectedStart_time),
+        expectedEnd_time: takeHHMM(r.expectedEnd_time),
+        status: r.status ?? "Booked",
+        // comments are not part of the hook's select; fetch on demand
+        comments: undefined,
+      }));
 
       setAppts(cleaned);
     } catch (e: any) {
@@ -139,7 +115,7 @@ const CustomerAppointments: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [user?.id]);
+  }, [user?.id, loadUpcomingCustomerAppointments]);
 
   useEffect(() => {
     void loadMine();
@@ -151,10 +127,22 @@ const CustomerAppointments: React.FC = () => {
   };
 
   /* ---------- Cancel flow ---------- */
-  const openCancel = (a: ApptCard) => {
-    setToCancel(a);
-    setCancelReason("");
-    setCancelOpen(true);
+  const openCancel = async (a: ApptCard) => {
+    // Ensure we have the latest comments before composing cancel patch
+    try {
+      const { data, error } = await supabase
+        .from("Appointments")
+        .select("comments")
+        .eq("appointment_id", a.appointment_id)
+        .single();
+      if (error) throw error;
+      setToCancel({ ...a, comments: data?.comments ?? null });
+    } catch {
+      setToCancel({ ...a, comments: a.comments ?? null });
+    } finally {
+      setCancelReason("");
+      setCancelOpen(true);
+    }
   };
   const closeCancel = () => {
     setCancelOpen(false);
@@ -173,9 +161,9 @@ const CustomerAppointments: React.FC = () => {
       }
       await updateAppointment(toCancel.appointment_id, patch);
 
-      // optimistic update
+      // optimistic remove from list
       setAppts((prev) =>
-        prev.filter((a) => a.appointment_id !== toCancel.appointment_id)
+        prev.filter((x) => x.appointment_id !== toCancel.appointment_id)
       );
       closeCancel();
     } catch (e: any) {
@@ -186,70 +174,80 @@ const CustomerAppointments: React.FC = () => {
   /* ---------- Update flow ---------- */
   const openUpdate = async (a: ApptCard) => {
     setToUpdate(a);
-    setUpdateComments(a.comments ?? "");
     setUpdateOpen(true);
     setDetailsLoading(true);
     setUpdateDetails(null);
 
     try {
-      // Service/Package
-      const { data: sp, error: spErr } = await supabase
-        .from("AppointmentServicePlan")
-        .select("service_id,package_id")
-        .eq("appointment_id", a.appointment_id)
-        .single();
-      if (spErr) throw spErr;
+      // Always fetch latest comments now that the hook doesn't return it
+      const [{ data: apptRow }, { data: sp }, linkRes] = await Promise.all([
+        supabase
+          .from("Appointments")
+          .select("comments")
+          .eq("appointment_id", a.appointment_id)
+          .single(),
+        supabase
+          .from("AppointmentServicePlan")
+          .select("service_id,package_id")
+          .eq("appointment_id", a.appointment_id)
+          .single(),
+        supabase
+          .from("AppointmentStylists")
+          .select("stylist_id")
+          .eq("appointment_id", a.appointment_id)
+          .maybeSingle(),
+      ]);
 
+      setUpdateComments(apptRow?.comments ?? "");
+
+      // Service/Package details
       let serviceName = "";
       let durationText = "—";
       let priceText = "—";
 
       if (sp?.service_id) {
-        const { data: s, error: sErr } = await supabase
+        const { data: s } = await supabase
           .from("Services")
           .select("name,duration,min_price,max_price")
           .eq("service_id", sp.service_id)
           .single();
-        if (sErr) throw sErr;
-        serviceName = s.name;
-        durationText = s.duration ? `${s.duration} mins` : "—";
-        if (s.min_price != null && s.max_price != null) {
-          priceText =
-            s.min_price === s.max_price
-              ? `₱${s.min_price}`
-              : `₱${s.min_price} - ₱${s.max_price}`;
-        } else if (s.min_price != null || s.max_price != null) {
-          priceText = `₱${(s.min_price ?? s.max_price) as number}`;
+        if (s) {
+          serviceName = s.name;
+          durationText = s.duration ? `${s.duration} mins` : "—";
+          if (s.min_price != null && s.max_price != null) {
+            priceText =
+              s.min_price === s.max_price
+                ? `₱${s.min_price}`
+                : `₱${s.min_price} - ₱${s.max_price}`;
+          } else if (s.min_price != null || s.max_price != null) {
+            priceText = `₱${(s.min_price ?? s.max_price) as number}`;
+          }
         }
       } else if (sp?.package_id) {
-        const { data: p, error: pErr } = await supabase
+        const { data: p } = await supabase
           .from("Package")
           .select("name,expected_duration,price")
           .eq("package_id", sp.package_id)
           .single();
-        if (pErr) throw pErr;
-        serviceName = p.name;
-        durationText = p.expected_duration
-          ? `${p.expected_duration} mins`
-          : "—";
-        priceText =
-          p.price != null && !Number.isNaN(p.price) ? `₱${p.price}` : "—";
+        if (p) {
+          serviceName = p.name;
+          durationText = p.expected_duration
+            ? `${p.expected_duration} mins`
+            : "—";
+          priceText =
+            p.price != null && !Number.isNaN(p.price) ? `₱${p.price}` : "—";
+        }
       }
 
       // Stylist
       let stylistName = "—";
-      const { data: link, error: linkErr } = await supabase
-        .from("AppointmentStylists")
-        .select("stylist_id")
-        .eq("appointment_id", a.appointment_id)
-        .single();
-      if (!linkErr && link?.stylist_id) {
-        const { data: st, error: stErr } = await supabase
+      if (linkRes?.data?.stylist_id) {
+        const { data: st } = await supabase
           .from("Stylists")
           .select("name")
-          .eq("stylist_id", link.stylist_id)
+          .eq("stylist_id", linkRes.data.stylist_id)
           .single();
-        if (!stErr && st?.name) stylistName = st.name;
+        if (st?.name) stylistName = st.name;
       }
 
       setUpdateDetails([
@@ -281,13 +279,14 @@ const CustomerAppointments: React.FC = () => {
   const confirmUpdate = async () => {
     if (!toUpdate) return;
     try {
+      const comment = updateComments.trim();
       await updateAppointment(toUpdate.appointment_id, {
-        comments: updateComments.trim() ? updateComments.trim() : null,
+        comments: comment ? comment : null,
       });
       setAppts((prev) =>
         prev.map((x) =>
           x.appointment_id === toUpdate.appointment_id
-            ? { ...x, comments: updateComments.trim() || null }
+            ? { ...x, comments: comment || null }
             : x
         )
       );
@@ -329,7 +328,7 @@ const CustomerAppointments: React.FC = () => {
             boxShadow: "0 2px 8px rgba(0,0,0,0.05)",
             display: "flex",
             flexDirection: "column",
-            maxHeight: isMobile ? "60vh" : "70vh", // ensure card itself won't exceed viewport too much
+            maxHeight: isMobile ? "60vh" : "70vh",
           }}
         >
           <h2
@@ -338,13 +337,11 @@ const CustomerAppointments: React.FC = () => {
             My Upcoming Appointments
           </h2>
 
-          {/* Scrollable list area */}
           <div
             aria-label="Upcoming appointments"
             style={{
               overflowY: "auto",
               paddingRight: 6,
-              // leave some room for header & padding inside the white card
               maxHeight: "100%",
               overscrollBehavior: "contain",
             }}
@@ -394,7 +391,7 @@ const CustomerAppointments: React.FC = () => {
                     <span>
                       Notes:{" "}
                       <span style={{ color: "#f59e0b", fontWeight: 600 }}>
-                        {a.comments ? a.comments : "—"}
+                        {a.comments ?? "—"}
                       </span>
                     </span>
                     <button

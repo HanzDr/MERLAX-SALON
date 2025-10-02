@@ -1,8 +1,9 @@
+// AdminFeedback.tsx
 import { useMemo, useState, useEffect } from "react";
-import CategorizeForm from "@/features/feedback/components/categorize-feedback-form";
-import FeedbackCard from "@/features/feedback/components/feedback-card";
-import FeedbackForm from "@/features/feedback/components/respond-feedback-form";
-import { useFeedbackContext } from "@/features/feedback/context/FeedbackContext";
+import CategorizeForm from "@/features/feedback/components/ui/categorize-feedback-form";
+import FeedbackCard from "@/features/feedback/components/ui/feedback-card";
+import FeedbackForm from "@/features/feedback/components/ui/respond-feedback-form";
+import useFeedback from "@/features/feedback/hooks/useFeedback"; // ⬅️ use the hook methods
 import type { FeedbackCategory } from "@/features/feedback/utils/feedback-types";
 import type {
   feedbackCategorizeData,
@@ -19,8 +20,15 @@ type SortKey = "date-desc" | "date-asc" | "rating-desc" | "rating-asc";
 
 /* --------------------- Component --------------------- */
 export default function AdminFeedback() {
-  const { feedback, updateFeedback /* optionally: loading, error */ } =
-    useFeedbackContext();
+  // ⬇️ pull everything you need from the hook
+  const {
+    feedback,
+    isLoading,
+    error,
+    getAllFeedback,
+    getFeedbackByCategory,
+    updateFeedback,
+  } = useFeedback();
 
   const [modal, setModal] = useState<ModalState>(null);
 
@@ -34,8 +42,21 @@ export default function AdminFeedback() {
   const PAGE_SIZE = 8;
   const [page, setPage] = useState(1);
 
+  // 🔄 Load from Supabase using your hook methods
   useEffect(() => {
-    // Reset to page 1 on any filter/search change
+    // If you want server-side category filtering, use getFeedbackByCategory.
+    // Otherwise, comment this out and always call getAllFeedback.
+    if (category !== "ALL") {
+      // category-filtered query from DB
+      getFeedbackByCategory(category).catch(console.error);
+    } else {
+      // grab a reasonable window (adjust range as you like)
+      getAllFeedback(0, 199).catch(console.error);
+    }
+  }, [category, getAllFeedback, getFeedbackByCategory]);
+
+  // Reset to page 1 on any filter/search change
+  useEffect(() => {
     setPage(1);
   }, [q, category, minRating, sortBy]);
 
@@ -65,7 +86,7 @@ export default function AdminFeedback() {
   const filtered = useMemo(() => {
     let list = feedback ?? [];
 
-    // Search over name + description
+    // Search over name + description (keep if your FeedbackCardProps has description)
     const qLower = q.trim().toLowerCase();
     if (qLower) {
       list = list.filter((f) => {
@@ -79,7 +100,7 @@ export default function AdminFeedback() {
       });
     }
 
-    // Category filter
+    // (Optional) if you prefer client-side category filter too, keep this when category !== "ALL"
     if (category !== "ALL") {
       list = list.filter((f) => (f.category ?? null) === category);
     }
@@ -125,7 +146,6 @@ export default function AdminFeedback() {
           Review, categorize, and respond to customer feedback.
         </p>
       </header>
-
       {/* Toolbar */}
       <div className="mb-5 grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
         {/* Search */}
@@ -148,14 +168,17 @@ export default function AdminFeedback() {
           </label>
           <select
             value={category}
-            onChange={(e) => setCategory(e.target.value as any)}
+            onChange={(e) =>
+              setCategory(e.target.value as FeedbackCategory | "ALL")
+            }
             className="w-full rounded-xl border px-3 py-2"
           >
             <option value="ALL">All</option>
-            <option value="COMPLIMENT">Compliment</option>
-            <option value="COMPLAINT">Complaint</option>
-            <option value="SUGGESTION">Suggestion</option>
-            <option value="OTHER">Other</option>
+            {/* Keep these aligned with your union type */}
+            <option value="Positive">Positive</option>
+            <option value="Negative">Negative</option>
+            <option value="Suggestion">Suggestion</option>
+            <option value="Neutral">Neutral</option>
           </select>
         </div>
 
@@ -199,84 +222,122 @@ export default function AdminFeedback() {
           </select>
         </div>
       </div>
-
-      {/* Meta line */}
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-2 text-sm text-gray-600">
-        <span>
-          Showing <b>{pageItems.length}</b> of <b>{total}</b> feedback
-          {q || category !== "ALL" || minRating !== "ALL" ? " (filtered)" : ""}
-        </span>
-        {totalPages > 1 && (
-          <div className="inline-flex items-center gap-2">
-            <button
-              className="rounded-lg border px-3 py-1 disabled:opacity-50"
-              disabled={page <= 1}
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-            >
-              Prev
-            </button>
+      {/* Meta / Loading / Error */}
+      {isLoading && (
+        <div className="rounded-2xl border p-6 text-center text-gray-500 mb-4">
+          Loading…
+        </div>
+      )}
+      {error && (
+        <div className="rounded-2xl border p-6 text-center text-rose-600 mb-4">
+          {error.message}
+        </div>
+      )}
+      {!isLoading && !error && (
+        <>
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-2 text-sm text-gray-600">
             <span>
-              Page <b>{page}</b> / {totalPages}
+              Showing <b>{pageItems.length}</b> of <b>{total}</b> feedback
+              {q || category !== "ALL" || minRating !== "ALL"
+                ? " (filtered)"
+                : ""}
             </span>
-            <button
-              className="rounded-lg border px-3 py-1 disabled:opacity-50"
-              disabled={page >= totalPages}
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-            >
-              Next
-            </button>
+            {totalPages > 1 && (
+              <div className="inline-flex items-center gap-2">
+                <button
+                  className="rounded-lg border px-3 py-1 disabled:opacity-50"
+                  disabled={page <= 1}
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                >
+                  Prev
+                </button>
+                <span>
+                  Page <b>{page}</b> / {totalPages}
+                </span>
+                <button
+                  className="rounded-lg border px-3 py-1 disabled:opacity-50"
+                  disabled={page >= totalPages}
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                >
+                  Next
+                </button>
+              </div>
+            )}
           </div>
-        )}
-      </div>
 
-      {/* Content */}
-      {pageItems.length === 0 ? (
-        <div className="rounded-2xl border border-dashed p-12 text-center">
-          <div className="text-lg font-semibold">No feedback found</div>
-          <p className="mt-1 text-sm text-gray-500">
-            Try clearing filters or changing the search.
-          </p>
-        </div>
-      ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {pageItems.map((f) => (
-            <FeedbackCard
-              key={f.feedbackId}
-              feedbackId={f.feedbackId}
-              firstName={f.firstName}
-              middleName={f.middleName}
-              lastName={f.lastName}
-              date={f.date}
-              description={f.description}
-              category={f.category}
-              rating={f.rating}
-              onCategorize={() =>
-                setModal({ type: "CATEGORIZE", feedbackId: f.feedbackId })
-              }
-              onRespond={() =>
-                setModal({ type: "RESPOND", feedbackId: f.feedbackId })
-              }
-            />
-          ))}
-        </div>
+          {/* Content */}
+          {pageItems.length === 0 ? (
+            <div className="rounded-2xl border border-dashed p-12 text-center">
+              <div className="text-lg font-semibold">No feedback found</div>
+              <p className="mt-1 text-sm text-gray-500">
+                Try clearing filters or changing the search.
+              </p>
+            </div>
+          ) : (
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {pageItems.map((f) => (
+                <FeedbackCard
+                  key={f.feedbackId}
+                  feedbackId={f.feedbackId}
+                  firstName={f.firstName}
+                  middleName={f.middleName}
+                  lastName={f.lastName}
+                  date={f.date}
+                  description={f.description}
+                  category={f.category}
+                  rating={f.rating}
+                  onCategorize={() =>
+                    setModal({ type: "CATEGORIZE", feedbackId: f.feedbackId })
+                  }
+                  onRespond={() =>
+                    setModal({ type: "RESPOND", feedbackId: f.feedbackId })
+                  }
+                />
+              ))}
+            </div>
+          )}
+        </>
       )}
-
       {/* Modals */}
-      {modal?.type === "CATEGORIZE" && (
-        <CategorizeForm
-          key={modal.feedbackId}
-          feedbackId={modal.feedbackId}
-          onClose={onClose}
-          onSave={handleSaveCategorize}
-        />
-      )}
 
+      {modal?.type === "CATEGORIZE" &&
+        (() => {
+          const item = feedback?.find((f) => f.feedbackId === modal.feedbackId);
+
+          // If your DB/category values are UPPERCASE, normalize to Title Case for the select
+          const normalizeCategory = (c?: string | null): FeedbackCategory => {
+            switch ((c ?? "").toUpperCase()) {
+              case "POSITIVE":
+                return "Positive";
+              case "NEGATIVE":
+                return "Negative";
+              case "SUGGESTION":
+                return "Suggestion";
+              case "NEUTRAL":
+                return "Neutral";
+              default:
+                return "Neutral"; // sensible fallback
+            }
+          };
+
+          return (
+            <CategorizeForm
+              key={modal.feedbackId}
+              feedbackId={modal.feedbackId}
+              initialCategory={normalizeCategory(item?.category)}
+              onClose={onClose}
+              onSave={handleSaveCategorize}
+            />
+          );
+        })()}
       {modal?.type === "RESPOND" && (
         <FeedbackForm
           key={modal.feedbackId}
           feedbackId={modal.feedbackId}
           onClose={onClose}
-          onSave={handleSaveRespond}
+          onSave={({ comment }) => {
+            onClose();
+          }}
         />
       )}
     </div>

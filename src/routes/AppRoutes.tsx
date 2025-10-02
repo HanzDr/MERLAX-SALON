@@ -29,6 +29,7 @@ import { ServicesAndStylistProvider } from "@/features/servicesAndStylist/contex
 import { PromoManagementProvider } from "@/features/promo-management/context/promoManagementContext";
 import { AppointmentProvider } from "@/features/appointments/context/AppointmentContext";
 import { FeedbackProvider } from "@/features/feedback/context/FeedbackContext";
+import { AuthProvider } from "@/features/auth/context/AuthContext";
 const router = createBrowserRouter([
   {
     path: "/",
@@ -123,7 +124,16 @@ const router = createBrowserRouter([
               </AppointmentProvider>
             ),
           },
-          { path: "feedback", element: <CustomerFeedback /> },
+          {
+            path: "feedback",
+            element: (
+              <AuthProvider>
+                <FeedbackProvider>
+                  <CustomerFeedback />
+                </FeedbackProvider>
+              </AuthProvider>
+            ),
+          },
           { path: "profile", element: <CustomerProfile /> },
           { path: "promos", element: <CustomerPromos /> },
         ],

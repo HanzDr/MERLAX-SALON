@@ -8,7 +8,7 @@ type HistoryRow = {
   id: string;
   customer_name: string | null;
   stylist_name: string | null;
-  service_date: string | Date; // normalized/rendered below
+  service_date: string | Date;
   status:
     | "Booked"
     | "On-Going"
@@ -17,8 +17,8 @@ type HistoryRow = {
     | "Cancelled"
     | string;
   total_amount: number | null;
-  notes?: string | null; // e.g., "Walk-In" / "Booked Online"
-  customer_id?: string | null; // for notes fallback
+  notes?: string | null;
+  customer_id?: string | null;
 };
 
 /* ============================ Helpers ============================ */
