@@ -1,5 +1,4 @@
 // features/feedback/components/ui/feedback-card.tsx
-
 import { RiDeleteBin6Line } from "react-icons/ri";
 import { StarRating } from "../../utils/helper-methods";
 import type {
@@ -15,8 +14,10 @@ const badgeClasses: Record<FeedbackCategory, string> = {
 };
 
 type FeedbackCardProps = BaseCardProps & {
-  /** NEW: whether admin already posted a response */
+  /** whether admin already posted a response */
   adminResponded?: boolean;
+  /** wire to soft-delete (display=false) */
+  onDelete?: () => void;
 };
 
 function formatDate(input: unknown) {
@@ -46,10 +47,14 @@ const FeedbackCard = ({
   category,
   onCategorize,
   onRespond,
-  adminResponded = false, // ⬅️ default false
+  adminResponded = false,
+  onDelete,
 }: FeedbackCardProps) => {
   const displayDate = formatDate(date);
   const respondLabel = adminResponded ? "View response" : "Respond";
+
+  // In case category can be null in your data, guard the badge rendering
+  const hasCategory = Boolean(category);
 
   return (
     <div className="max-w-xl">
@@ -68,10 +73,13 @@ const FeedbackCard = ({
           <p className="leading-relaxed text-gray-700">{description}</p>
         </div>
 
-        {category && (
+        {hasCategory && (
           <div className="mt-4">
+            {/* TypeScript narrows here since hasCategory ensures category is truthy */}
             <span
-              className={`inline-flex items-center rounded-full border px-3 py-1 text-sm font-semibold ${badgeClasses[category]}`}
+              className={`inline-flex items-center rounded-full border px-3 py-1 text-sm font-semibold ${
+                badgeClasses[category as FeedbackCategory]
+              }`}
             >
               {category}
             </span>
@@ -101,6 +109,7 @@ const FeedbackCard = ({
           <button
             aria-label="Delete feedback"
             className="rounded-lg p-2 text-red-600 hover:bg-red-50"
+            onClick={onDelete}
           >
             <RiDeleteBin6Line className="h-6 w-6" />
           </button>

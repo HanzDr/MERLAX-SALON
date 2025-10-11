@@ -1,9 +1,9 @@
 // AdminFeedback.tsx
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState, useEffect, useRef } from "react";
 import CategorizeForm from "@/features/feedback/components/ui/categorize-feedback-form";
 import FeedbackCard from "@/features/feedback/components/ui/feedback-card";
 import FeedbackForm from "@/features/feedback/components/ui/respond-feedback-form";
-import useFeedback from "@/features/feedback/hooks/useFeedback"; // ⬅️ use the hook methods
+import useFeedback from "@/features/feedback/hooks/useFeedback";
 import type { FeedbackCategory } from "@/features/feedback/utils/feedback-types";
 import type {
   feedbackCategorizeData,
@@ -18,9 +18,92 @@ type ModalState =
 
 type SortKey = "date-desc" | "date-asc" | "rating-desc" | "rating-asc";
 
+/* --------------------- Confirm Delete Modal --------------------- */
+type ConfirmDeleteModalProps = {
+  open: boolean;
+  name?: string;
+  onCancel: () => void;
+  onConfirm: () => Promise<void> | void;
+  isSubmitting?: boolean;
+};
+
+function ConfirmDeleteModal({
+  open,
+  name,
+  onCancel,
+  onConfirm,
+  isSubmitting = false,
+}: ConfirmDeleteModalProps) {
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+
+  // Close on Esc
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onCancel();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open, onCancel]);
+
+  if (!open) return null;
+
+  return (
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center"
+      aria-modal="true"
+      role="dialog"
+      aria-labelledby="confirm-title"
+      aria-describedby="confirm-desc"
+    >
+      {/* backdrop */}
+      <div
+        className="absolute inset-0 bg-black/40"
+        onClick={onCancel}
+        aria-hidden="true"
+      />
+      {/* dialog */}
+      <div
+        ref={dialogRef}
+        className="relative z-[101] w-[92%] max-w-md rounded-2xl bg-white p-6 shadow-2xl"
+      >
+        <h2 id="confirm-title" className="text-lg font-semibold text-gray-900">
+          Hide this feedback?
+        </h2>
+        <p id="confirm-desc" className="mt-2 text-sm text-gray-600">
+          This will set delete the feedback for
+          {name ? (
+            <>
+              {" "}
+              <b>{name}</b>
+            </>
+          ) : null}
+          . You can restore it later from the database.
+        </p>
+
+        <div className="mt-6 flex items-center justify-end gap-3">
+          <button
+            className="rounded-lg border px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+            onClick={onCancel}
+            disabled={isSubmitting}
+          >
+            Cancel
+          </button>
+          <button
+            className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-60"
+            onClick={onConfirm}
+            disabled={isSubmitting}
+          >
+            {isSubmitting ? "Deleting..." : "Delete feedback"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* --------------------- Component --------------------- */
 export default function AdminFeedback() {
-  // ⬇️ pull everything you need from the hook
   const {
     feedback,
     isLoading,
@@ -28,9 +111,17 @@ export default function AdminFeedback() {
     getAllFeedback,
     getFeedbackByCategory,
     updateFeedback,
+    softDeleteFeedback,
   } = useFeedback();
 
   const [modal, setModal] = useState<ModalState>(null);
+
+  // Delete confirmation state
+  const [deleteTarget, setDeleteTarget] = useState<{
+    id: string;
+    name?: string;
+  } | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // Toolbar state
   const [q, setQ] = useState("");
@@ -44,13 +135,9 @@ export default function AdminFeedback() {
 
   // 🔄 Load from Supabase using your hook methods
   useEffect(() => {
-    // If you want server-side category filtering, use getFeedbackByCategory.
-    // Otherwise, comment this out and always call getAllFeedback.
     if (category !== "ALL") {
-      // category-filtered query from DB
       getFeedbackByCategory(category).catch(console.error);
     } else {
-      // grab a reasonable window (adjust range as you like)
       getAllFeedback(0, 199).catch(console.error);
     }
   }, [category, getAllFeedback, getFeedbackByCategory]);
@@ -86,7 +173,7 @@ export default function AdminFeedback() {
   const filtered = useMemo(() => {
     let list = feedback ?? [];
 
-    // Search over name + description (keep if your FeedbackCardProps has description)
+    // Search over name + description
     const qLower = q.trim().toLowerCase();
     if (qLower) {
       list = list.filter((f) => {
@@ -100,7 +187,7 @@ export default function AdminFeedback() {
       });
     }
 
-    // (Optional) if you prefer client-side category filter too, keep this when category !== "ALL"
+    // Optional client-side category filter
     if (category !== "ALL") {
       list = list.filter((f) => (f.category ?? null) === category);
     }
@@ -146,6 +233,7 @@ export default function AdminFeedback() {
           Review, categorize, and respond to customer feedback.
         </p>
       </header>
+
       {/* Toolbar */}
       <div className="mb-5 grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
         {/* Search */}
@@ -174,7 +262,6 @@ export default function AdminFeedback() {
             className="w-full rounded-xl border px-3 py-2"
           >
             <option value="ALL">All</option>
-            {/* Keep these aligned with your union type */}
             <option value="Positive">Positive</option>
             <option value="Negative">Negative</option>
             <option value="Suggestion">Suggestion</option>
@@ -222,6 +309,7 @@ export default function AdminFeedback() {
           </select>
         </div>
       </div>
+
       {/* Meta / Loading / Error */}
       {isLoading && (
         <div className="rounded-2xl border p-6 text-center text-gray-500 mb-4">
@@ -233,6 +321,7 @@ export default function AdminFeedback() {
           {error.message}
         </div>
       )}
+
       {!isLoading && !error && (
         <>
           <div className="mb-4 flex flex-wrap items-center justify-between gap-2 text-sm text-gray-600">
@@ -275,36 +364,40 @@ export default function AdminFeedback() {
             </div>
           ) : (
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {pageItems.map((f) => (
-                <FeedbackCard
-                  key={f.feedbackId}
-                  feedbackId={f.feedbackId}
-                  firstName={f.firstName}
-                  middleName={f.middleName}
-                  lastName={f.lastName}
-                  date={f.date}
-                  description={f.description}
-                  category={f.category}
-                  rating={f.rating}
-                  onCategorize={() =>
-                    setModal({ type: "CATEGORIZE", feedbackId: f.feedbackId })
-                  }
-                  onRespond={() =>
-                    setModal({ type: "RESPOND", feedbackId: f.feedbackId })
-                  }
-                />
-              ))}
+              {pageItems.map((f) => {
+                const name = [f.firstName, f.middleName, f.lastName]
+                  .filter(Boolean)
+                  .join(" ");
+                return (
+                  <FeedbackCard
+                    key={f.feedbackId}
+                    feedbackId={f.feedbackId}
+                    firstName={f.firstName}
+                    middleName={f.middleName}
+                    lastName={f.lastName}
+                    date={f.date}
+                    description={f.description}
+                    category={f.category}
+                    rating={f.rating}
+                    onCategorize={() =>
+                      setModal({ type: "CATEGORIZE", feedbackId: f.feedbackId })
+                    }
+                    onRespond={() =>
+                      setModal({ type: "RESPOND", feedbackId: f.feedbackId })
+                    }
+                    onDelete={() => setDeleteTarget({ id: f.feedbackId, name })}
+                  />
+                );
+              })}
             </div>
           )}
         </>
       )}
-      {/* Modals */}
 
+      {/* Modals */}
       {modal?.type === "CATEGORIZE" &&
         (() => {
           const item = feedback?.find((f) => f.feedbackId === modal.feedbackId);
-
-          // If your DB/category values are UPPERCASE, normalize to Title Case for the select
           const normalizeCategory = (c?: string | null): FeedbackCategory => {
             switch ((c ?? "").toUpperCase()) {
               case "POSITIVE":
@@ -316,10 +409,9 @@ export default function AdminFeedback() {
               case "NEUTRAL":
                 return "Neutral";
               default:
-                return "Neutral"; // sensible fallback
+                return "Neutral";
             }
           };
-
           return (
             <CategorizeForm
               key={modal.feedbackId}
@@ -330,16 +422,35 @@ export default function AdminFeedback() {
             />
           );
         })()}
+
       {modal?.type === "RESPOND" && (
         <FeedbackForm
           key={modal.feedbackId}
           feedbackId={modal.feedbackId}
           onClose={onClose}
-          onSave={({ comment }) => {
-            onClose();
-          }}
+          onSave={handleSaveRespond}
         />
       )}
+
+      {/* Confirm Delete */}
+      <ConfirmDeleteModal
+        open={Boolean(deleteTarget)}
+        name={deleteTarget?.name}
+        isSubmitting={isDeleting}
+        onCancel={() => setDeleteTarget(null)}
+        onConfirm={async () => {
+          if (!deleteTarget) return;
+          try {
+            setIsDeleting(true);
+            await softDeleteFeedback(deleteTarget.id);
+            setDeleteTarget(null);
+          } catch (e) {
+            console.error(e);
+            // You can surface errors via toast/snackbar here
+            setIsDeleting(false);
+          }
+        }}
+      />
     </div>
   );
 }

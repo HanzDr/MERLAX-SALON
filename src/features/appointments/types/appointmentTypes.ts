@@ -85,3 +85,4 @@ export type HistoryRow = {
   notes: string | null;
   customer_id: string | null;
 };
+

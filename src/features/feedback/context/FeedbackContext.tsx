@@ -22,7 +22,7 @@ export const FeedbackProvider = ({
 export const useFeedbackContext = () => {
   const context = useContext(FeedbackContext);
   if (!context) {
-    throw new Error("useAuthContext must be used inside FeedbackProvider");
+    throw new Error("useFeedbackContext must be used inside FeedbackProvider");
   }
   return context;
 };

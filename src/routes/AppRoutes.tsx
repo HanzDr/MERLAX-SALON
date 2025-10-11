@@ -20,7 +20,7 @@ import CustomerSignUp from "@/pages/customer/CustomerSignUp";
 import CustomerAppointments from "@/pages/customer/CustomerAppointments";
 import CustomerFeedback from "@/pages/customer/CustomerFeedback";
 import CustomerProfile from "@/pages/customer/CustomerProfile";
-import CustomerPromos from "@/pages/customer/CustomerPromos";
+
 import CustomerLayout from "@/layouts/CustomerLayout";
 
 import RootLayout from "@/layouts/RootLayout";
@@ -30,6 +30,8 @@ import { PromoManagementProvider } from "@/features/promo-management/context/pro
 import { AppointmentProvider } from "@/features/appointments/context/AppointmentContext";
 import { FeedbackProvider } from "@/features/feedback/context/FeedbackContext";
 import { AuthProvider } from "@/features/auth/context/AuthContext";
+import AdminInventory from "@/pages/admin/AdminInventory";
+import { InventoryProvider } from "@/features/inventory/context/InventoryContext";
 const router = createBrowserRouter([
   {
     path: "/",
@@ -89,7 +91,14 @@ const router = createBrowserRouter([
               </FeedbackProvider>
             ),
           },
-          { path: "inventory", element: <NotFoundPage /> }, // Need to update element
+          {
+            path: "inventory",
+            element: (
+              <InventoryProvider>
+                <AdminInventory />
+              </InventoryProvider>
+            ),
+          }, // Need to update element
           {
             path: "promoManagement",
             element: (
@@ -135,7 +144,6 @@ const router = createBrowserRouter([
             ),
           },
           { path: "profile", element: <CustomerProfile /> },
-          { path: "promos", element: <CustomerPromos /> },
         ],
       },
 

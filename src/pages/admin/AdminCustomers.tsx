@@ -14,14 +14,6 @@ type Appointment = {
   status?: string; // Booked | Completed | Cancelled
 };
 
-type ServiceTxn = {
-  id?: string;
-  datetime?: string;
-  service?: string;
-  stylist?: string;
-  status?: string; // Completed | Cancelled
-};
-
 type Feedback = {
   id?: string;
   date?: string;
@@ -47,8 +39,8 @@ type ProfileLike = Customer & {
   customer_id?: string;
   appointments?: number;
   upcomingAppointments?: Appointment[];
-  transactions?: ServiceTxn[];
-  packages?: Array<{ id?: string; name: string; note?: string }>;
+  // transactions?: ServiceTxn[];           // ⛔️ removed from UI
+  // packages?: Array<{ id?: string; name: string; note?: string }>; // ⛔️ removed from UI
   feedbacks?: Feedback[];
   is_blocked?: boolean; // important
   auth_user_id?: string; // ✅ needed to call setCustomerBlocked
@@ -91,8 +83,8 @@ const ViewProfileModal = ({
   const fullName = fullNameOf(profile);
 
   const appts: Appointment[] = profile.upcomingAppointments ?? [];
-  const txns: ServiceTxn[] = profile.transactions ?? [];
-  const pkgs = profile.packages ?? [];
+  // const txns = profile.transactions ?? []; // ⛔️ removed
+  // const pkgs = profile.packages ?? [];     // ⛔️ removed
   const fbs: Feedback[] = profile.feedbacks ?? [];
 
   const statusPill = (s?: string) => {
@@ -222,64 +214,9 @@ const ViewProfileModal = ({
               </div>
             </section>
 
-            {/* Transactions */}
-            <section className="rounded-2xl border p-6">
-              <h4 className="text-lg font-semibold">
-                Service Transaction History
-              </h4>
-              <div className="mt-3 rounded-xl border bg-white max-h-56 overflow-y-auto">
-                {txns.length === 0 && (
-                  <div className="p-4 text-sm text-gray-500">
-                    No transactions.
-                  </div>
-                )}
-                {txns.map((t, i) => (
-                  <div
-                    key={t.id ?? i}
-                    className="flex items-center justify-between gap-3 p-4 border-b last:border-b-0"
-                  >
-                    <div className="text-sm">
-                      <div className="text-gray-800">{t.datetime ?? "—"}</div>
-                      <div className="text-gray-600">
-                        Service: {t.service ?? "—"}
-                      </div>
-                      {t.stylist && (
-                        <div className="text-gray-600">
-                          Stylist: {t.stylist}
-                        </div>
-                      )}
-                    </div>
-                    <span
-                      className={`rounded-full px-3 py-1 text-xs font-medium ${statusPill(
-                        t.status
-                      )}`}
-                    >
-                      {t.status ?? "—"}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </section>
+            {/* ⛔️ Removed: Service Transaction History */}
 
-            {/* Packages */}
-            <section className="rounded-2xl border p-6">
-              <h4 className="text-lg font-semibold">Available Packages</h4>
-              <div className="mt-3 space-y-3 max-h-56 overflow-y-auto">
-                {pkgs.length === 0 && (
-                  <div className="text-sm text-gray-500">
-                    No packages available.
-                  </div>
-                )}
-                {pkgs.map((p) => (
-                  <div key={p.id ?? p.name} className="rounded-xl border p-3">
-                    <div className="font-medium">{p.name}</div>
-                    {p.note && (
-                      <div className="text-sm text-gray-500">{p.note}</div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </section>
+            {/* ⛔️ Removed: Available Packages */}
 
             {/* Feedback */}
             <section className="md:col-span-3 rounded-2xl border p-6">

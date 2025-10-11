@@ -106,6 +106,132 @@ const isCompleted = (status: string) => /complete/i.test(status);
 
 const PAGE_SIZE_OPTIONS = [5, 10, 20];
 
+/* ======================== Print helpers ======================== */
+
+const escapeHTML = (s: string) =>
+  s.replace(/[&<>"']/g, (c) => {
+    switch (c) {
+      case "&":
+        return "&amp;";
+      case "<":
+        return "&lt;";
+      case ">":
+        return "&gt;";
+      case '"':
+        return "&quot;";
+      case "'":
+        return "&#39;";
+      default:
+        return c;
+    }
+  });
+
+/** Builds a simple, A4-friendly receipt HTML for printing. */
+const buildReceiptHTML = (row: HistoryRow) => {
+  const today = new Date();
+  const printedAt = today.toLocaleString("en-PH", {
+    hour12: false,
+  });
+
+  const id = escapeHTML(row.id);
+  const customer = escapeHTML(
+    row.customer_name ?? (row.customer_id ? "Customer" : "Walk-In")
+  );
+  const stylist = escapeHTML(row.stylist_name ?? "—");
+  const dateStr = fmtDate(row.service_date);
+  const status = escapeHTML(
+    row.status === "Ongoing" ? "On-Going" : String(row.status ?? "—")
+  );
+  const total = fmtPHP(row.total_amount);
+  const notes = escapeHTML(
+    row.notes ?? (row.customer_id ? "Booked Online" : "Walk-In")
+  );
+
+  // Inline CSS for print
+  return `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Receipt - ${id}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root { --ink:#111827; --muted:#6b7280; --border:#e5e7eb; --brand:#f59e0b; }
+    * { box-sizing: border-box; }
+    html, body { margin:0; padding:0; color:var(--ink); font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica Neue, Arial, "Apple Color Emoji","Segoe UI Emoji"; }
+    @page { size: A4; margin: 18mm; }
+    .wrap { max-width: 720px; margin: 0 auto; }
+    .head { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:24px; }
+    .brand { font-weight:800; font-size:20px; letter-spacing:0.3px; }
+    .brand-badge { display:inline-block; padding:2px 8px; border-radius:9999px; background:var(--brand); color:white; font-weight:700; margin-left:8px; }
+    .meta { font-size:12px; color:var(--muted); }
+    .card { border:1px solid var(--border); border-radius:12px; padding:16px; margin-bottom:12px; }
+    .row { display:flex; gap:16px; margin:6px 0; }
+    .label { width:160px; color:var(--muted); font-size:12px; }
+    .value { flex:1; font-size:14px; font-weight:600; }
+    .total { font-size:20px; font-weight:800; }
+    .footer { margin-top:24px; font-size:12px; color:var(--muted); text-align:center; }
+    .sep { height:1px; background:var(--border); margin:16px 0; }
+    .small { font-size:12px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="head">
+      <div class="brand">Receipt <span class="brand-badge">PAID</span></div>
+      <div class="meta">
+        Printed: ${escapeHTML(printedAt)}<br/>
+        Ref: ${id}
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="row"><div class="label">Customer</div><div class="value">${customer}</div></div>
+      <div class="row"><div class="label">Stylist</div><div class="value">${stylist}</div></div>
+      <div class="row"><div class="label">Service Date</div><div class="value">${escapeHTML(
+        dateStr
+      )}</div></div>
+      <div class="row"><div class="label">Status</div><div class="value">${status}</div></div>
+      <div class="sep"></div>
+      <div class="row"><div class="label">Notes</div><div class="value small">${
+        notes || "—"
+      }</div></div>
+    </div>
+
+    <div class="card">
+      <div class="row">
+        <div class="label">Total</div>
+        <div class="value total">${escapeHTML(total)}</div>
+      </div>
+    </div>
+
+    <div class="footer">Thank you! — Please keep this receipt for your records.</div>
+  </div>
+
+  <script>
+    // Wait for layout, then print
+    window.addEventListener('load', () => {
+      try { window.print(); } catch(_) {}
+      // Close after print (some browsers block this; harmless if ignored)
+      setTimeout(() => { window.close(); }, 300);
+    });
+  </script>
+</body>
+</html>`;
+};
+
+/** Opens a new window with the receipt and triggers print() */
+const openReceiptPrint = (row: HistoryRow) => {
+  const html = buildReceiptHTML(row);
+  const w = window.open("", "_blank");
+  if (!w) {
+    alert("Please allow pop-ups to print the receipt.");
+    return;
+  }
+  w.document.open();
+  w.document.write(html);
+  w.document.close();
+};
+
 /* ======================== Component ======================== */
 
 const AdminAppointmentHistory: React.FC = () => {
@@ -187,10 +313,8 @@ const AdminAppointmentHistory: React.FC = () => {
   const goTo = (p: number) =>
     setPage(Math.max(1, Math.min(totalPages, p || 1)));
 
-  // Actions — wire these to your modals/flows if needed
-  const onView = (row: HistoryRow) => {
-    console.log("view", row.id);
-  };
+  // Actions
+  const onPrintReceipt = (row: HistoryRow) => openReceiptPrint(row);
   const onDelete = (row: HistoryRow) => {
     console.log("delete", row.id);
   };
@@ -329,8 +453,8 @@ const AdminAppointmentHistory: React.FC = () => {
                       {isCompleted(r.status) && (
                         <button
                           className="rounded-md p-2 text-gray-700 hover:bg-gray-100"
-                          title="View"
-                          onClick={() => onView(r)}
+                          title="Print Receipt"
+                          onClick={() => onPrintReceipt(r)}
                         >
                           <ReceiptText className="h-5 w-5" />
                         </button>

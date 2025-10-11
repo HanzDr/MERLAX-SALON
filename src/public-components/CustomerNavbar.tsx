@@ -37,11 +37,6 @@ const CustomerNavbar = () => {
             icon={<CgProfile size={22} />}
             label="Profile"
           />
-          <NavItem
-            to="/customer/promos"
-            icon={<RiDiscountPercentLine size={22} />}
-            label="Promos"
-          />
         </div>
 
         {/* Logout Button */}
@@ -84,11 +79,7 @@ const CustomerNavbar = () => {
             icon={<CgProfile size={20} />}
             label="Profile"
           />
-          <NavItem
-            to="/customer/promos"
-            icon={<RiDiscountPercentLine size={20} />}
-            label="Promos"
-          />
+
           <button
             onClick={signOut}
             className="flex items-center gap-2 px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded-lg transition text-base"

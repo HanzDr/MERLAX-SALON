@@ -10,7 +10,7 @@ import type { UpdatePayload } from "../utils/feedback-types";
 type FeedbackItem = Omit<FeedbackCardProps, "onCategorize" | "onRespond">;
 
 const COLUMNS =
-  "feedback_id, appointment_id, customer_id, firstName, middleName, lastName, rating, category, admin_response, customer_response, created_at";
+  "feedback_id, appointment_id, customer_id, firstName, middleName, lastName, rating, category, admin_response, customer_response, created_at, isDisplay";
 
 /** DB row → UI shape (camelCase with safe fallbacks) */
 function mapRowToItem(r: any): FeedbackItem {
@@ -43,7 +43,7 @@ const useFeedback = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
 
-  /** Get all site-wide (paginated by index range) */
+  /** Get all site-wide (paginated by index range) — only visible rows */
   const getAllFeedback = useCallback(
     async (startingIndex: number, endingIndex: number) => {
       setIsLoading(true);
@@ -52,6 +52,7 @@ const useFeedback = () => {
         const { data, error: supaErr } = await supabase
           .from("Feedback")
           .select(COLUMNS)
+          .eq("isDisplay", true)
           .order("created_at", { ascending: false })
           .range(startingIndex, endingIndex);
 
@@ -71,7 +72,7 @@ const useFeedback = () => {
     []
   );
 
-  /** Get by category (site-wide) */
+  /** Get by category (site-wide) — only visible rows */
   const getFeedbackByCategory = useCallback(
     async (category: FeedbackCategory) => {
       setIsLoading(true);
@@ -80,6 +81,7 @@ const useFeedback = () => {
         const { data, error: supaErr } = await supabase
           .from("Feedback")
           .select(COLUMNS)
+          .eq("isDisplay", true)
           .eq("category", category)
           .order("created_at", { ascending: false });
 
@@ -99,7 +101,7 @@ const useFeedback = () => {
     []
   );
 
-  /** NEW: Get feedback for a specific customer (pending/responded/all) */
+  /** Get feedback for a specific customer (pending/responded/all) — only visible rows */
   const getFeedbackByCustomer = useCallback(
     async (
       customerId: string,
@@ -113,6 +115,7 @@ const useFeedback = () => {
         let q = supabase
           .from("Feedback")
           .select(COLUMNS)
+          .eq("isDisplay", true)
           .eq("customer_id", customerId)
           .order("created_at", { ascending: false })
           .limit(limit);
@@ -152,7 +155,7 @@ const useFeedback = () => {
         return { feedbackId: existing[0].feedback_id };
       }
 
-      // Pull display name from Appointments or Customers
+      // Pull isDisplay name from Appointments or Customers
       const { data: aRow, error: aErr } = await supabase
         .from("Appointments")
         .select("customer_id, firstName, middleName, lastName")
@@ -190,6 +193,7 @@ const useFeedback = () => {
         category: null,
         admin_response: null,
         customer_response: null,
+        isDisplay: true, // ← ensure new rows are visible
       };
 
       const { data, error: insErr } = await supabase
@@ -253,14 +257,16 @@ const useFeedback = () => {
   /**
    * Latest feedback (by this customer) with no customer_response
    * + its plan/services/packages (used for "prompt to respond" flow)
+   * Only visible rows.
    */
   const getUnrepliedCustomerFeedback = useCallback(
     async (customerId: string) => {
       const { data: csf, error: csfError } = await supabase
         .from("Feedback")
         .select(
-          "feedback_id, appointment_id, customer_id, customer_response, created_at"
+          "feedback_id, appointment_id, customer_id, customer_response, created_at, isDisplay"
         )
+        .eq("isDisplay", true)
         .eq("customer_id", customerId)
         .is("customer_response", null)
         .order("created_at", { ascending: false })
@@ -331,16 +337,35 @@ const useFeedback = () => {
     []
   );
 
+  /** Soft delete (hide) a feedback by flipping isDisplay=false */
+  const softDeleteFeedback = useCallback(async (feedbackId: string) => {
+    if (!feedbackId) throw new Error("Missing feedbackId for delete.");
+
+    const { error: supaErr } = await supabase
+      .from("Feedback")
+      .update({ isDisplay: false })
+      .eq("feedback_id", feedbackId);
+
+    if (supaErr) throw supaErr;
+
+    // Optimistic UI: remove from local state
+    setFeedback((prev) =>
+      (prev ?? []).filter((f) => f.feedbackId !== feedbackId)
+    );
+    return { ok: true as const };
+  }, []);
+
   return {
     feedback,
     isLoading,
     error,
     getAllFeedback,
     getFeedbackByCategory,
-    getFeedbackByCustomer, // ← NEW export
+    getFeedbackByCustomer,
     createFeedbackForAppointment,
     updateFeedback,
     getUnrepliedCustomerFeedback,
+    softDeleteFeedback,
   };
 };
 
