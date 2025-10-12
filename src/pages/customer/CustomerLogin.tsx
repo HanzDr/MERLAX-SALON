@@ -98,7 +98,7 @@ const CustomerLogin = () => {
 
           {/* Forgot Password Link */}
           <div className="text-left">
-            <Link to="/customer/resetPassword">
+            <Link to="/reset-password">
               <p className="text-sm text-blue-500 hover:underline">
                 Forgot Password?
               </p>

@@ -2,8 +2,9 @@ import { useState } from "react";
 import { FaLock } from "react-icons/fa";
 import { supabase } from "@/lib/supabaseclient";
 
-export default function ResetPassword() {
-  const [email, setEmail] = useState("");
+export default function UpdatePassword() {
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
   const [loading, setLoading] = useState(false);
   const [ok, setOk] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -13,28 +14,26 @@ export default function ResetPassword() {
     setOk(null);
     setErr(null);
 
+    if (password.length < 5) {
+      setErr("Password must be at least 5 characters long.");
+      return;
+    }
+    if (password !== confirm) {
+      setErr("Passwords do not match.");
+      return;
+    }
+
     try {
       setLoading(true);
-
-      // In Vite, use import.meta.env and a VITE_* var (optional).
-      const fromEnv = (import.meta as any)?.env?.VITE_SITE_URL as
-        | string
-        | undefined;
-
-      // Fallback to current origin in dev
-      const origin = (fromEnv || window.location.origin).replace(/\/$/, "");
-      const redirectTo = `${origin}/update-password`; // matches your AppRoutes
-
-      const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo,
-      });
+      const { error } = await supabase.auth.updateUser({ password });
       if (error) throw error;
-
       setOk(
-        "If an account exists for that email, a reset link has been sent. Please check your inbox."
+        "Password updated successfully. You can now sign in with your new password."
       );
+      setPassword("");
+      setConfirm("");
     } catch (e: any) {
-      setErr(e?.message || "Failed to send reset email.");
+      setErr(e?.message || "Failed to update password.");
     } finally {
       setLoading(false);
     }
@@ -48,7 +47,7 @@ export default function ResetPassword() {
           <h1 className="text-2xl font-bold text-[#FFB030] mt-2 font-newsreader">
             MERLAX
           </h1>
-          <p className="text-gray-600 text-sm mt-1">Reset Password</p>
+          <p className="text-gray-600 text-sm mt-1">Set a New Password</p>
         </div>
 
         {ok && (
@@ -65,19 +64,39 @@ export default function ResetPassword() {
         <form className="space-y-6" onSubmit={onSubmit}>
           <div>
             <label
-              htmlFor="email"
+              htmlFor="password"
               className="block mb-1 text-sm font-medium text-gray-700"
             >
-              Email
+              New password
             </label>
             <input
-              id="email"
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="e.g. dhoregalado@addu.edu.ph"
+              id="password"
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="••••••••"
               className="w-full border-2 border-gray-300 rounded-lg p-2 outline-none focus:border-[#FFB030]"
               required
+              minLength={6}
+            />
+          </div>
+
+          <div>
+            <label
+              htmlFor="confirm"
+              className="block mb-1 text-sm font-medium text-gray-700"
+            >
+              Confirm password
+            </label>
+            <input
+              id="confirm"
+              type="password"
+              value={confirm}
+              onChange={(e) => setConfirm(e.target.value)}
+              placeholder="••••••••"
+              className="w-full border-2 border-gray-300 rounded-lg p-2 outline-none focus:border-[#FFB030]"
+              required
+              minLength={6}
             />
           </div>
 
@@ -86,7 +105,7 @@ export default function ResetPassword() {
             disabled={loading}
             className="w-full bg-[#FFB030] hover:bg-[#e09d29] p-2 rounded text-white font-medium disabled:opacity-60"
           >
-            {loading ? "Sending…" : "Send Reset Password"}
+            {loading ? "Updating…" : "Update Password"}
           </button>
         </form>
       </div>

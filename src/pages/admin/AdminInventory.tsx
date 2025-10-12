@@ -180,7 +180,7 @@ const AdminInventory: React.FC = () => {
     }
   }, []);
 
-  /* --- NEW: fetch categories on page load so the filter dropdown is populated immediately --- */
+  /* --- fetch categories on page load so the filter dropdown is populated immediately --- */
   useEffect(() => {
     fetchCategories().catch(() => {});
   }, [fetchCategories]);
@@ -615,7 +615,8 @@ const AdminInventory: React.FC = () => {
   const categoryOptions = categories.map((c) => c.name); // strictly from ProductCategory table
 
   return (
-    <main className="min-h-screen overflow-x-hidden  lg:ml-64">
+    // ⬇️ Removed `lg:ml-64` so the page is no longer pushed far to the right
+    <main className="min-h-screen overflow-x-hidden">
       <div className="mx-auto max-w-7xl p-6">
         <h1 className="text-3xl font-bold">Inventory Management</h1>
 
@@ -624,7 +625,7 @@ const AdminInventory: React.FC = () => {
           {["inventory", "movement"].map((tab) => (
             <button
               key={tab}
-              className={`rounded-full px-4 py-1 text-sm font-semibold transition-colors ${
+              className={`rounded-lg px-4 py-3 text-sm font-semibold transition-colors ${
                 activeTab === tab
                   ? "bg-amber-400 text-white"
                   : "bg-gray-100 text-gray-700 hover:bg-gray-200"
@@ -639,7 +640,7 @@ const AdminInventory: React.FC = () => {
         {/* Header + Actions */}
         <div className="mt-8 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
-            <h2 className="text-2xl font-bold">
+            <h2 className="text-2xl font-bold ">
               {activeTab === "inventory"
                 ? "Inventory Overview"
                 : "Stock Movements"}

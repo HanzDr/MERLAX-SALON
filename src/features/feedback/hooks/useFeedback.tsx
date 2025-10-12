@@ -19,7 +19,7 @@ function mapRowToItem(r: any): FeedbackItem {
 
   return {
     feedbackId: r.feedback_id,
-    // keep appointmentId around (TS ignores extra keys not present in FeedbackItem)
+    // keep appointmentId around
     // @ts-ignore
     appointmentId: r.appointment_id ?? null,
 
@@ -27,10 +27,7 @@ function mapRowToItem(r: any): FeedbackItem {
     middleName: r.middleName ?? "",
     lastName: r.lastName ?? "",
 
-    // use created_at as the card date (format at render)
     date: r.created_at,
-
-    // prefer customer's response for description, else admin's
     description: r.customer_response ?? r.admin_response ?? "",
 
     category,
@@ -140,7 +137,11 @@ const useFeedback = () => {
     []
   );
 
-  /** Create feedback for an appointment (idempotent) */
+  /**
+   * Create feedback for an appointment (idempotent).
+   * ✅ Fetches Appointments first to get the current customer_id and names,
+   *    then stores that customer_id into Feedback.customer_id.
+   */
   const createFeedbackForAppointment = useCallback(
     async (appointment_id: string) => {
       // Prevent duplicates
@@ -155,7 +156,7 @@ const useFeedback = () => {
         return { feedbackId: existing[0].feedback_id };
       }
 
-      // Pull isDisplay name from Appointments or Customers
+      // Pull display name & customer_id from Appointments (authoritative at completion time)
       const { data: aRow, error: aErr } = await supabase
         .from("Appointments")
         .select("customer_id, firstName, middleName, lastName")
@@ -169,6 +170,7 @@ const useFeedback = () => {
       let lastName: string | null = aRow?.lastName ?? null;
       const customer_id: string | null = aRow?.customer_id ?? null;
 
+      // If it’s a customer account, prefer canonical names from Customers
       if (customer_id) {
         const { data: cRow, error: cErr } = await supabase
           .from("Customers")
@@ -185,7 +187,7 @@ const useFeedback = () => {
 
       const payload = {
         appointment_id,
-        customer_id,
+        customer_id, // ✅ persisted for customer-centric queries
         firstName,
         middleName,
         lastName,
@@ -193,7 +195,7 @@ const useFeedback = () => {
         category: null,
         admin_response: null,
         customer_response: null,
-        isDisplay: true, // ← ensure new rows are visible
+        isDisplay: true,
       };
 
       const { data, error: insErr } = await supabase

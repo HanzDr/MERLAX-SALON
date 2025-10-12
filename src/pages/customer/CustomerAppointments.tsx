@@ -1,10 +1,15 @@
 // CustomerAppointments.tsx
-import { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import BookAppointment from "@/public-components/BookAppointments";
 import "react-datepicker/dist/react-datepicker.css";
 import { supabase } from "@/lib/supabaseclient";
 import { useAuthContext } from "@/features/auth/context/AuthContext";
 import { useAppointments } from "@/features/appointments/hooks/useAppointments";
+
+// 👉 Import your separate table component and its row type
+import CustomerAppointmentHistory, {
+  type AppointmentRow as HistoryRow,
+} from "@/features/appointments/components/customer-appointment-history";
 
 type ApptCard = {
   appointment_id: string;
@@ -55,6 +60,20 @@ const fmtDateLong = (iso: string) => {
     day: "numeric",
   });
 };
+// for table: "13/05/2025"
+const fmtDDMMYYYY = (iso: string) => {
+  if (!iso) return "—";
+  const [y, m, d] = iso.split("-").map(Number);
+  if (!y || !m || !d) return "—";
+  return `${pad(d)}/${pad(m)}/${y}`;
+};
+const peso = (v: number | null | undefined) =>
+  v == null || Number.isNaN(Number(v))
+    ? "—"
+    : `₱${Number(v).toLocaleString(undefined, {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      })}`;
 
 const CustomerAppointments: React.FC = () => {
   const [isMobile, setIsMobile] = useState<boolean>(false);
@@ -75,8 +94,14 @@ const CustomerAppointments: React.FC = () => {
   const [detailsLoading, setDetailsLoading] = useState(false);
 
   const { user } = useAuthContext();
-  const { updateAppointment, loadUpcomingCustomerAppointments } =
-    useAppointments();
+  const {
+    updateAppointment,
+    loadUpcomingCustomerAppointments,
+    // used by history section
+    getAppointmentPeopleAndPlans,
+    loadCustomerAppointmentHistory,
+    deleteAppointmentCascade,
+  } = useAppointments();
 
   /* responsive */
   useEffect(() => {
@@ -103,7 +128,6 @@ const CustomerAppointments: React.FC = () => {
         expectedStart_time: takeHHMM(r.expectedStart_time),
         expectedEnd_time: takeHHMM(r.expectedEnd_time),
         status: r.status ?? "Booked",
-        // comments are not part of the hook's select; fetch on demand
         comments: undefined,
       }));
 
@@ -124,11 +148,11 @@ const CustomerAppointments: React.FC = () => {
   /* called by BookAppointment when a new booking is made */
   const handleBooked = async () => {
     await loadMine();
+    await reloadHistory(); // keep table fresh after new booking completes later
   };
 
   /* ---------- Cancel flow ---------- */
   const openCancel = async (a: ApptCard) => {
-    // Ensure we have the latest comments before composing cancel patch
     try {
       const { data, error } = await supabase
         .from("Appointments")
@@ -166,6 +190,7 @@ const CustomerAppointments: React.FC = () => {
         prev.filter((x) => x.appointment_id !== toCancel.appointment_id)
       );
       closeCancel();
+      await reloadHistory();
     } catch (e: any) {
       alert(e?.message || "Failed to cancel appointment.");
     }
@@ -179,7 +204,6 @@ const CustomerAppointments: React.FC = () => {
     setUpdateDetails(null);
 
     try {
-      // Always fetch latest comments now that the hook doesn't return it
       const [{ data: apptRow }, { data: sp }, linkRes] = await Promise.all([
         supabase
           .from("Appointments")
@@ -291,14 +315,145 @@ const CustomerAppointments: React.FC = () => {
         )
       );
       closeUpdate();
+      await reloadHistory();
     } catch (e: any) {
       alert(e?.message || "Failed to update appointment.");
+    }
+  };
+
+  /* -------------------- History state (for separate table) -------------------- */
+  type TabKey = "ALL" | "COMPLETED" | "CANCELLED";
+  const [histTab, setHistTab] = useState<TabKey>("ALL");
+  const [histPerPage, setHistPerPage] = useState<number>(5);
+  const [histPage, setHistPage] = useState<number>(1);
+  const [histSearch, setHistSearch] = useState<string>("");
+  const [histTotalPages, setHistTotalPages] = useState<number>(1);
+  const [histRows, setHistRows] = useState<HistoryRow[]>([]);
+  const [histLoading, setHistLoading] = useState<boolean>(false);
+
+  const reloadHistory = useCallback(async () => {
+    if (!user?.id) {
+      setHistRows([]);
+      setHistTotalPages(1);
+      return;
+    }
+
+    try {
+      setHistLoading(true);
+
+      const statusFilter =
+        histTab === "COMPLETED"
+          ? "Completed"
+          : histTab === "CANCELLED"
+          ? "Cancelled"
+          : undefined;
+
+      const { items, total } = await loadCustomerAppointmentHistory({
+        customer_id: user.id,
+        page: histPage,
+        pageSize: histPerPage,
+        search: histSearch || undefined, // server can still search status/comments
+        status: statusFilter,
+      });
+
+      // enrich with stylist/service names
+      const ids = items.map((r: any) => r.id);
+      const meta = await getAppointmentPeopleAndPlans(ids);
+
+      // Map to table rows
+      const mapped: HistoryRow[] = items.map((r: any) => {
+        const stylists = meta[r.id]?.stylists ?? [];
+        const services = meta[r.id]?.services ?? [];
+        const packages = meta[r.id]?.packages ?? [];
+        const planName =
+          services.concat(packages).join(", ") || (r.plan ?? "—");
+        const payment = r.payment_method || r.paymentMode || "—";
+
+        return {
+          id: r.id,
+          service: planName || "—",
+          stylist: stylists.join(", ") || "—",
+          date: fmtDDMMYYYY(r.service_date),
+          amount: peso(r.total_amount),
+          paymentMode: String(payment),
+          status: r.status === "Cancelled" ? "Cancelled" : "Completed",
+        };
+      });
+
+      // ----- CLIENT-SIDE SEARCH FIX -----
+      const q = (histSearch || "").trim().toLowerCase();
+      const filtered = q
+        ? mapped.filter((row) => {
+            const hay = [
+              row.service,
+              row.stylist,
+              row.date,
+              row.amount,
+              row.paymentMode,
+              row.status,
+            ]
+              .join(" ")
+              .toLowerCase();
+            return hay.includes(q);
+          })
+        : mapped;
+
+      setHistRows(filtered);
+
+      // If client search is active, clamp to a single page for honesty
+      if (q) {
+        setHistTotalPages(1);
+      } else {
+        setHistTotalPages(
+          Math.max(1, Math.ceil((total ?? mapped.length) / histPerPage))
+        );
+      }
+    } catch (e) {
+      console.error("history load error", e);
+      setHistRows([]);
+      setHistTotalPages(1);
+    } finally {
+      setHistLoading(false);
+    }
+  }, [
+    user?.id,
+    histPage,
+    histPerPage,
+    histSearch,
+    histTab,
+    loadCustomerAppointmentHistory,
+    getAppointmentPeopleAndPlans,
+  ]);
+
+  useEffect(() => {
+    void reloadHistory();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reloadHistory]);
+
+  const handleDeleteHistory = async (id: string) => {
+    const ok = confirm(
+      "Delete this appointment permanently? This cannot be undone."
+    );
+    if (!ok) return;
+    try {
+      await deleteAppointmentCascade(id);
+      // If we just deleted the last item on a page > 1, step back a page
+      if (histRows.length === 1 && histPage > 1) {
+        setHistPage((p) => p - 1);
+      } else {
+        await reloadHistory();
+      }
+      await loadMine();
+    } catch (e: any) {
+      alert(e?.message || "Failed to delete appointment.");
     }
   };
 
   return (
     <>
       <style>{calendarStyles}</style>
+
+      {/* ORIGINAL LAYOUT: row on desktop, column on mobile */}
       <div
         className="appointments-wrapper"
         style={{
@@ -317,7 +472,7 @@ const CustomerAppointments: React.FC = () => {
           customerId={user?.id ?? null}
         />
 
-        {/* Appointments */}
+        {/* Appointments (unchanged) */}
         <div
           style={{
             flex: 0.9,
@@ -428,6 +583,40 @@ const CustomerAppointments: React.FC = () => {
             )}
           </div>
         </div>
+      </div>
+
+      {/* HISTORY AT THE VERY BOTTOM (outside the row wrapper) */}
+      <div
+        style={{
+          padding: isMobile ? "0 20px 30px" : "0 100px 40px",
+          background: "#f5f5f5",
+        }}
+      >
+        <CustomerAppointmentHistory
+          title="Appointment History"
+          rows={histRows}
+          activeTab={histTab}
+          onTabChange={(t) => {
+            setHistTab(t);
+            setHistPage(1);
+          }}
+          perPageOptions={[5, 10, 25]}
+          perPage={histPerPage}
+          onPerPageChange={(n) => {
+            setHistPerPage(n);
+            setHistPage(1);
+          }}
+          searchText={histSearch}
+          onSearchTextChange={(v) => {
+            setHistSearch(v);
+            setHistPage(1);
+          }}
+          page={histPage}
+          totalPages={histTotalPages}
+          onPageChange={(p) => setHistPage(p)}
+          onDelete={handleDeleteHistory}
+          emptyText={histLoading ? "Loading…" : "No appointments found."}
+        />
       </div>
 
       {/* Cancel Confirmation Modal */}
@@ -666,7 +855,6 @@ const CustomerAppointments: React.FC = () => {
                   background: "#FFB030",
                   color: "#fff",
                   fontWeight: 700,
-                  cursor: "pointer",
                 }}
               >
                 Confirm Appointment
@@ -679,6 +867,7 @@ const CustomerAppointments: React.FC = () => {
   );
 };
 
+/* Small row fragment for the update modal */
 const FragmentRow: React.FC<{ label: string; value: string }> = ({
   label,
   value,

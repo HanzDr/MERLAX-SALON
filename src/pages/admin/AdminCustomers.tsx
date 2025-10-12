@@ -1,21 +1,22 @@
-// components/AdminCustomers.tsx
 import { useEffect, useMemo, useState } from "react";
 import { usePaginationContext } from "@/public-context/PaginationContext";
 import { ExternalLink, X } from "lucide-react";
 import { type Customer } from "@/features/auth/types/AuthTypes";
+import { supabase } from "@/lib/supabaseclient";
+import FeedbackForm from "@/features/feedback/components/ui/respond-feedback-form";
+import { setCustomerBlocked } from "@/features/auth/hooks/UseUserProfile";
+import useAppointments from "@/features/appointments/hooks/useAppointments";
 
-import { setCustomerBlocked } from "@/features/auth/hooks/UseUserProfile"; // Weak security, but needed for admin actions
-
-// ---------- Types ----------
 type Appointment = {
   id?: string;
   datetime?: string;
   service?: string;
-  status?: string; // Booked | Completed | Cancelled
+  status?: string;
 };
 
 type Feedback = {
-  id?: string;
+  id: string;
+  appointmentId?: string | null;
   date?: string;
   stylist?: string;
   service?: string;
@@ -39,15 +40,12 @@ type ProfileLike = Customer & {
   customer_id?: string;
   appointments?: number;
   upcomingAppointments?: Appointment[];
-  // transactions?: ServiceTxn[];           // ⛔️ removed from UI
-  // packages?: Array<{ id?: string; name: string; note?: string }>; // ⛔️ removed from UI
   feedbacks?: Feedback[];
-  is_blocked?: boolean; // important
-  auth_user_id?: string; // ✅ needed to call setCustomerBlocked
-  role?: string; // ✅ "admin" | "customer" | etc.
+  is_blocked?: boolean;
+  auth_user_id?: string;
+  role?: string;
 };
 
-// ---------- Helpers ----------
 const fullNameOf = (c: any) =>
   [c.firstName, c.middleName, c.lastName].filter(Boolean).join(" ") ||
   c.name ||
@@ -65,7 +63,24 @@ const toDateLabel = (d?: string) => {
       });
 };
 
-// ---------- View Profile Modal ----------
+const toDateTimeLabel = (dateISO?: string, hhmm?: string) => {
+  if (!dateISO) return "—";
+  try {
+    const [y, m, d] = dateISO.split("-").map(Number);
+    const [hh = 0, mm = 0] = (hhmm ?? "00:00").split(":").map(Number);
+    const dt = new Date(y, (m || 1) - 1, d || 1, hh, mm);
+    return dt.toLocaleString(undefined, {
+      month: "short",
+      day: "2-digit",
+      year: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  } catch {
+    return `${dateISO}${hhmm ? ` ${hhmm}` : ""}`;
+  }
+};
+
 const ViewProfileModal = ({
   open,
   onClose,
@@ -79,19 +94,177 @@ const ViewProfileModal = ({
   onToggleBlock?: (customer: ProfileLike) => void;
   busy?: boolean;
 }) => {
+  const [loadingExtra, setLoadingExtra] = useState(false);
+
+  const [upcoming, setUpcoming] = useState<Appointment[]>(
+    profile?.upcomingAppointments ?? []
+  );
+  const [transactions, setTransactions] = useState<Appointment[]>([]);
+  const [customerFeedbacks, setCustomerFeedbacks] = useState<Feedback[]>([]);
+
+  const { getAppointmentPeopleAndPlans } = useAppointments();
+
+  const [respondId, setRespondId] = useState<string | null>(null);
+  const closeRespond = () => setRespondId(null);
+
+  useEffect(() => {
+    if (!open || !profile?.customer_id) {
+      setUpcoming(profile?.upcomingAppointments ?? []);
+      setTransactions([]);
+      setCustomerFeedbacks([]);
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      try {
+        setLoadingExtra(true);
+        const cid = profile.customer_id;
+
+        // Upcoming
+        const { data: upRows, error: upErr } = await supabase
+          .from("Appointments")
+          .select("appointment_id,date,expectedStart_time,status,display")
+          .eq("customer_id", cid)
+          .eq("display", true)
+          .in("status", ["Booked", "Ongoing", "On-Going"])
+          .order("date", { ascending: true })
+          .order("expectedStart_time", { ascending: true });
+        if (upErr) throw upErr;
+
+        // Transactions
+        const { data: txRows, error: txErr } = await supabase
+          .from("Appointments")
+          .select("appointment_id,date,expectedStart_time,status,display")
+          .eq("customer_id", cid)
+          .eq("display", true)
+          .in("status", ["Completed", "Cancelled"])
+          .order("date", { ascending: false })
+          .order("expectedStart_time", { ascending: false })
+          .limit(50);
+        if (txErr) throw txErr;
+
+        // Feedback
+        const { data: fbRows, error: fbErr } = await supabase
+          .from("Feedback")
+          .select(
+            "feedback_id, appointment_id, created_at, rating, admin_response, customer_response, isDisplay"
+          )
+          .eq("isDisplay", true)
+          .eq("customer_id", cid)
+          .not("customer_response", "is", null)
+          .order("created_at", { ascending: false })
+          .limit(50);
+        if (fbErr) throw fbErr;
+
+        // Resolve stylists & plans
+        const upcomingIds = (upRows ?? []).map((r: any) => r.appointment_id);
+        const txnIds = (txRows ?? []).map((r: any) => r.appointment_id);
+        const fbIds = (fbRows ?? [])
+          .map((r: any) => r.appointment_id)
+          .filter(Boolean);
+        const meta = await getAppointmentPeopleAndPlans([
+          ...upcomingIds,
+          ...txnIds,
+          ...fbIds,
+        ]);
+
+        const toPlanString = (m?: {
+          services?: string[];
+          packages?: string[];
+        }) =>
+          m
+            ? [...(m.services ?? []), ...(m.packages ?? [])]
+                .filter(Boolean)
+                .join(", ")
+            : "";
+
+        const upcomingList: Appointment[] = (upRows ?? []).map((r: any) => {
+          const m = meta[String(r.appointment_id).trim()];
+          return {
+            id: r.appointment_id,
+            datetime: toDateTimeLabel(
+              r.date,
+              String(r.expectedStart_time ?? "").slice(0, 5)
+            ),
+            service: toPlanString(m) || "—",
+            status: r.status ?? "Booked",
+          };
+        });
+
+        const txnList: Appointment[] = (txRows ?? []).map((r: any) => {
+          const m = meta[String(r.appointment_id).trim()];
+          return {
+            id: r.appointment_id,
+            datetime: toDateTimeLabel(
+              r.date,
+              String(r.expectedStart_time ?? "").slice(0, 5)
+            ),
+            service: toPlanString(m) || "—",
+            status: r.status ?? "Completed",
+          };
+        });
+
+        const fbList: Feedback[] = (fbRows ?? []).map((r: any) => {
+          const key = r.appointment_id ? String(r.appointment_id).trim() : "";
+          const m = key ? meta[key] : undefined;
+
+          const dt =
+            r.created_at &&
+            new Date(r.created_at).toLocaleDateString("en-US", {
+              month: "2-digit",
+              day: "2-digit",
+              year: "numeric",
+            });
+
+          return {
+            id: r.feedback_id as string,
+            appointmentId: r.appointment_id ?? null,
+            date: dt,
+            rating: Number(r.rating ?? 0) || undefined,
+            text: r.customer_response ?? undefined,
+            adminResponse: r.admin_response ?? undefined,
+            stylist: m && m.stylists.length ? m.stylists.join(", ") : undefined,
+            service: toPlanString(m) || undefined,
+          };
+        });
+
+        if (!cancelled) {
+          setUpcoming(upcomingList);
+          setTransactions(txnList);
+          setCustomerFeedbacks(fbList);
+        }
+      } catch (e) {
+        console.error("Failed to load customer extras:", e);
+        if (!cancelled) {
+          setUpcoming(profile?.upcomingAppointments ?? []);
+          setTransactions([]);
+          setCustomerFeedbacks([]);
+        }
+      } finally {
+        if (!cancelled) setLoadingExtra(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    open,
+    profile?.customer_id,
+    profile?.upcomingAppointments,
+    getAppointmentPeopleAndPlans,
+  ]);
+
   if (!open || !profile) return null;
   const fullName = fullNameOf(profile);
-
-  const appts: Appointment[] = profile.upcomingAppointments ?? [];
-  // const txns = profile.transactions ?? []; // ⛔️ removed
-  // const pkgs = profile.packages ?? [];     // ⛔️ removed
-  const fbs: Feedback[] = profile.feedbacks ?? [];
 
   const statusPill = (s?: string) => {
     const v = (s || "").toLowerCase();
     if (v.includes("book")) return "bg-blue-100 text-blue-700";
     if (v.includes("complete")) return "bg-emerald-100 text-emerald-700";
     if (v.includes("cancel")) return "bg-rose-100 text-rose-700";
+    if (v.includes("ongo")) return "bg-fuchsia-100 text-fuchsia-700";
     return "bg-gray-100 text-gray-700";
   };
 
@@ -107,8 +280,9 @@ const ViewProfileModal = ({
   };
 
   const avgRating =
-    fbs.length > 0
-      ? fbs.reduce((s, f) => s + (f.rating || 0), 0) / fbs.length
+    customerFeedbacks.length > 0
+      ? customerFeedbacks.reduce((s, f) => s + (f.rating || 0), 0) /
+        customerFeedbacks.length
       : 0;
 
   return (
@@ -119,7 +293,6 @@ const ViewProfileModal = ({
         <div className="flex items-center justify-between border-b px-6 py-4">
           <h3 className="text-2xl font-bold">Customer Profile</h3>
           <div className="flex items-center gap-2">
-            {/* Hide Block/Unblock for admins */}
             {profile.role !== "admin" ? (
               <button
                 disabled={busy}
@@ -145,8 +318,12 @@ const ViewProfileModal = ({
 
         {/* Body */}
         <div className="p-6 overflow-y-auto max-h-[calc(90vh-64px)]">
+          {loadingExtra && (
+            <div className="mb-4 text-sm text-gray-500">Loading data…</div>
+          )}
+
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {/* Left card */}
+            {/* Left card: Customer details */}
             <section className="rounded-2xl border p-6">
               <div className="mx-auto mb-4 flex h-28 w-28 items-center justify-center rounded-full bg-amber-200 text-amber-700">
                 <span className="text-4xl font-bold">
@@ -184,12 +361,12 @@ const ViewProfileModal = ({
             <section className="md:col-span-2 rounded-2xl border p-6">
               <h4 className="text-xl font-semibold">Upcoming Appointments</h4>
               <div className="mt-4 divide-y rounded-xl border bg-white max-h-56 overflow-y-auto">
-                {appts.length === 0 && (
+                {upcoming.length === 0 && (
                   <div className="p-4 text-sm text-gray-500">
                     No upcoming appointments.
                   </div>
                 )}
-                {appts.map((a, i) => (
+                {upcoming.map((a, i) => (
                   <div
                     key={a.id ?? i}
                     className="flex items-center justify-between p-4"
@@ -198,9 +375,11 @@ const ViewProfileModal = ({
                       <div className="text-sm font-medium text-gray-800">
                         {a.datetime ?? "—"}
                       </div>
-                      <div className="text-sm text-gray-500">
-                        Service: {a.service ?? "—"}
-                      </div>
+                      {a.service && (
+                        <div className="text-sm text-gray-500">
+                          Service: {a.service}
+                        </div>
+                      )}
                     </div>
                     <span
                       className={`rounded-full px-3 py-1 text-xs font-medium ${statusPill(
@@ -214,41 +393,105 @@ const ViewProfileModal = ({
               </div>
             </section>
 
-            {/* ⛔️ Removed: Service Transaction History */}
-
-            {/* ⛔️ Removed: Available Packages */}
-
-            {/* Feedback */}
+            {/* Service Transactions */}
             <section className="md:col-span-3 rounded-2xl border p-6">
-              <div className="flex flex-wrap items-center gap-3 justify-between">
-                <h4 className="text-xl font-semibold">Feedback History</h4>
-                <div className="flex items-center gap-3 text-sm text-gray-700">
+              <h4 className="text-xl font-semibold">Service Transactions</h4>
+              <p className="mt-1 text-xs text-gray-500">
+                Completed and Cancelled appointments
+              </p>
+              <div className="mt-4 divide-y rounded-xl border bg-white max-h-72 overflow-y-auto">
+                {transactions.length === 0 && (
+                  <div className="p-4 text-sm text-gray-500">
+                    No service transactions.
+                  </div>
+                )}
+                {transactions.map((t, i) => (
+                  <div
+                    key={t.id ?? i}
+                    className="flex items-center justify-between p-4"
+                  >
+                    <div>
+                      <div className="text-sm font-medium text-gray-800">
+                        {t.datetime ?? "—"}
+                      </div>
+                      {t.service && (
+                        <div className="text-sm text-gray-500">
+                          Service: {t.service}
+                        </div>
+                      )}
+                    </div>
+                    <span
+                      className={`rounded-full px-3 py-1 text-xs font-medium ${statusPill(
+                        t.status
+                      )}`}
+                    >
+                      {t.status ?? "—"}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            {/* Feedback History */}
+            <section className="md:col-span-3 rounded-2xl border p-6">
+              <div className="flex flex-wrap items-center justify-between">
+                <h4 className="text-2xl font-bold">Feedback History</h4>
+                <div className="flex items-center gap-3 text-sm text-gray-900">
                   <StarRow value={avgRating} />
-                  <span className="text-gray-600">
+                  <span className="font-semibold">
                     {avgRating.toFixed(1)} Average Rating
                   </span>
                 </div>
               </div>
 
-              <div className="mt-4 space-y-4 max-h-72 overflow-y-auto">
-                {fbs.length === 0 && (
+              <div className="mt-4 space-y-6">
+                {customerFeedbacks.length === 0 && (
                   <div className="text-sm text-gray-500">No feedback yet.</div>
                 )}
-                {fbs.map((fb, i) => (
-                  <div key={fb.id ?? i} className="rounded-2xl border p-4">
-                    <div className="flex flex-wrap items-center gap-2 text-sm text-gray-600">
+
+                {customerFeedbacks.map((fb, i) => (
+                  <div
+                    key={fb.id ?? i}
+                    className="pb-6 border-b last:border-b-0"
+                  >
+                    {/* Stars + date row */}
+                    <div className="flex items-center justify-between">
                       <StarRow value={fb.rating ?? 0} />
-                      <span className="ml-2">{fb.date ?? "—"}</span>
-                      {fb.stylist && <span>• Stylist: {fb.stylist}</span>}
-                      {fb.service && <span>• Service: {fb.service}</span>}
+                      <span className="text-sm text-gray-700">
+                        {fb.date ?? "—"}
+                      </span>
                     </div>
-                    {fb.text && (
-                      <p className="mt-2 text-sm text-gray-800">{fb.text}</p>
-                    )}
-                    {fb.adminResponse && (
-                      <div className="mt-3 rounded-xl bg-gray-50 p-3 text-xs text-gray-700">
-                        <div className="font-medium mb-1">Admin Response</div>
-                        {fb.adminResponse}
+
+                    {/* Meta row */}
+                    <div className="mt-3 text-sm text-gray-800">
+                      <span className="font-semibold">Stylist:</span>{" "}
+                      {fb.stylist ?? "—"}
+                      <span className="mx-4" />
+                      <span className="font-semibold">Service:</span>{" "}
+                      {fb.service ?? "—"}
+                    </div>
+
+                    {/* Customer text */}
+                    {fb.text && <p className="mt-3 text-gray-900">{fb.text}</p>}
+
+                    {/* Add Response OR Admin Response (read-only) */}
+                    {!fb.adminResponse ? (
+                      <button
+                        className="mt-4 inline-flex items-center gap-2 rounded-lg bg-amber-400 px-4 py-2 text-sm font-semibold text-black hover:bg-amber-500"
+                        onClick={() => setRespondId(fb.id)}
+                      >
+                        <span className="text-lg leading-none">💬</span>
+                        Add Response
+                      </button>
+                    ) : (
+                      <div className="mt-4 rounded-2xl border bg-gray-50 p-4">
+                        <div className="mb-2 flex items-center gap-2 text-gray-800 font-semibold">
+                          <span className="text-lg">🛡️</span>
+                          Admin Response
+                        </div>
+                        <div className="text-sm text-gray-800 whitespace-pre-wrap">
+                          {fb.adminResponse}
+                        </div>
                       </div>
                     )}
                   </div>
@@ -258,6 +501,23 @@ const ViewProfileModal = ({
           </div>
         </div>
       </div>
+
+      {/* Respond modal (FeedbackForm). If already replied, it shows read-only. */}
+      {respondId && (
+        <FeedbackForm
+          key={respondId}
+          feedbackId={respondId}
+          onClose={closeRespond}
+          onSave={async ({ comment }) => {
+            setCustomerFeedbacks((prev) =>
+              prev.map((f) =>
+                f.id === respondId ? { ...f, adminResponse: comment } : f
+              )
+            );
+            closeRespond();
+          }}
+        />
+      )}
     </div>
   );
 };
@@ -268,7 +528,7 @@ const AdminCustomers = () => {
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [query, setQuery] = useState("");
   const [profileId, setProfileId] = useState<string | null>(null);
-  const [busyId, setBusyId] = useState<string | null>(null); // for disabling buttons
+  const [busyId, setBusyId] = useState<string | null>(null);
 
   const { paginatedCustomers, fetchPaginatedCustomers, loading } =
     usePaginationContext();
@@ -305,17 +565,13 @@ const AdminCustomers = () => {
     [list, profileId]
   );
 
-  // -- Toggle block/unblock (table & modal) via server action
   const handleToggleBlock = async (customer: ProfileLike) => {
-    // Guard: never block admins (defense in depth)
     if (customer.role === "admin") {
       alert("Admins cannot be blocked.");
       return;
     }
 
     const id = (customer.customer_id ?? (customer as any).id) as string;
-
-    // Try the common fields for the Supabase Auth user id
     const authUserId =
       customer.customer_id ??
       (customer as any).customer_id ??
@@ -333,16 +589,10 @@ const AdminCustomers = () => {
 
     try {
       setBusyId(id);
-      // optimistic UI in table & modal
       (customer as any).is_blocked = next;
-
-      // 🔒 Calls server-side function that uses supabaseAdmin
       await setCustomerBlocked(id, authUserId, next);
-
-      // refresh page slice to sync badges/buttons
       await fetchPaginatedCustomers(startingIndex, endingIndex);
     } catch (err: any) {
-      // rollback optimistic flip
       (customer as any).is_blocked = !next;
       console.error("Failed to update block status:", err?.message || err);
       alert(err?.message || "Failed to update block status. Please try again.");
@@ -457,7 +707,6 @@ const AdminCustomers = () => {
                         <ExternalLink className="h-5 w-5" />
                       </button>
 
-                      {/* Hide Block/Unblock button for admins */}
                       {c.role !== "admin" && (
                         <button
                           disabled={busyId === getId(c)}
@@ -489,18 +738,18 @@ const AdminCustomers = () => {
         </table>
       </div>
 
-      <ViewProfileModal
-        open={!!profileId}
-        onClose={() => setProfileId(null)}
-        profile={selectedProfile ?? null}
-        onToggleBlock={(c) => handleToggleBlock(c)}
-        busy={
-          busyId ===
-          (selectedProfile
-            ? selectedProfile.customer_id ?? (selectedProfile as any).id
-            : null)
-        }
-      />
+      {profileId && (
+        <ViewProfileModal
+          open={!!profileId}
+          onClose={() => setProfileId(null)}
+          profile={
+            (list.find((c: any) => (c.customer_id ?? c.id) === profileId) ??
+              null) as ProfileLike | null
+          }
+          onToggleBlock={(c) => handleToggleBlock(c)}
+          busy={busyId === profileId}
+        />
+      )}
     </div>
   );
 };

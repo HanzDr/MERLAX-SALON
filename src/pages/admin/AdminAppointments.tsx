@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useState, useCallback } from "react";
 import {
   Plus,
   CheckCircle2,
-  Undo2,
   Clock3,
   XCircle,
   ArrowUpFromLine,
@@ -1102,7 +1101,9 @@ const AdminAppointments: React.FC = () => {
   };
 
   const handleMarkComplete = async (a: Appt) => {
+    // Optimistic UI
     patchLocal(a.id, { status: "Completed" });
+
     try {
       await updateAppointment(a.id, { status: "Completed" as any });
     } catch (err) {
@@ -1112,12 +1113,12 @@ const AdminAppointments: React.FC = () => {
       return;
     }
 
-    // Fire-and-forget feedback creation; never revert status because of this
-    if (a.customer_id) {
-      createFeedbackForAppointment(a.id).catch((e) => {
-        console.error("Feedback creation failed (non-blocking):", e);
-      });
-    }
+    // ✅ Always create feedback (idempotent) and ensure customer_id is set from DB
+    //    The hook fetches Appointments → grabs customer_id → writes into Feedback.customer_id
+    createFeedbackForAppointment(a.id).catch((e) => {
+      // Non-blocking (don't revert completion on feedback errors)
+      console.error("Feedback creation failed (non-blocking):", e);
+    });
   };
 
   const handleCancel = async (a: Appt) => {

@@ -1,4 +1,3 @@
-// src/pages/admin/AdminAppointmentHistory.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useAppointments } from "@/features/appointments/hooks/useAppointments";
 import { ReceiptText, Trash2 } from "lucide-react";
@@ -235,7 +234,8 @@ const openReceiptPrint = (row: HistoryRow) => {
 /* ======================== Component ======================== */
 
 const AdminAppointmentHistory: React.FC = () => {
-  const { loadAdminAppointmentHistory } = useAppointments();
+  const { loadAdminAppointmentHistory, softDeleteAppointment } =
+    useAppointments();
 
   // keep a stable ref to avoid effect re-running when the hook re-creates the function
   const loadHistoryRef = useRef(loadAdminAppointmentHistory);
@@ -264,45 +264,40 @@ const AdminAppointmentHistory: React.FC = () => {
   const reqIdRef = useRef(0);
 
   // Fetch page (stable deps only)
-  useEffect(() => {
-    let isMounted = true;
+  const fetchPage = async (p = page, ps = pageSize, q = search) => {
     const myReqId = ++reqIdRef.current;
+    setLoading(true);
+    setErr(null);
+    try {
+      const res = await loadHistoryRef.current({
+        page: p,
+        pageSize: ps,
+        search: q,
+      });
 
-    (async () => {
-      try {
-        setLoading(true);
-        setErr(null);
+      if (myReqId !== reqIdRef.current) return;
 
-        const res = await loadHistoryRef.current({
-          page,
-          pageSize,
-          search,
-        });
+      // Normalize date to "YYYY-MM-DD" for consistency
+      const items = (res?.items ?? []).map((r) => ({
+        ...r,
+        service_date: toYMD(r.service_date) ?? r.service_date,
+      })) as HistoryRow[];
 
-        if (!isMounted || myReqId !== reqIdRef.current) return;
+      setRows(items);
+      setTotal(Number(res?.total ?? 0));
+      setInitialized(true);
+    } catch (e: any) {
+      if (myReqId !== reqIdRef.current) return;
+      setErr(e?.message || "Failed to load history.");
+      setInitialized(true);
+    } finally {
+      if (myReqId === reqIdRef.current) setLoading(false);
+    }
+  };
 
-        // Normalize date to "YYYY-MM-DD" right here for consistency
-        const items = (res?.items ?? []).map((r) => ({
-          ...r,
-          service_date: toYMD(r.service_date) ?? r.service_date,
-        })) as HistoryRow[];
-
-        setRows(items);
-        setTotal(Number(res?.total ?? 0));
-        setInitialized(true);
-      } catch (e: any) {
-        if (!isMounted || myReqId !== reqIdRef.current) return;
-        setErr(e?.message || "Failed to load history.");
-        // keep previous rows to avoid flicker on transient errors
-        setInitialized(true);
-      } finally {
-        if (isMounted && myReqId === reqIdRef.current) setLoading(false);
-      }
-    })();
-
-    return () => {
-      isMounted = false;
-    };
+  useEffect(() => {
+    fetchPage().catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, pageSize, search]);
 
   const totalPages = useMemo(
@@ -315,8 +310,34 @@ const AdminAppointmentHistory: React.FC = () => {
 
   // Actions
   const onPrintReceipt = (row: HistoryRow) => openReceiptPrint(row);
-  const onDelete = (row: HistoryRow) => {
-    console.log("delete", row.id);
+
+  const onDelete = async (row: HistoryRow) => {
+    const yes = window.confirm(
+      "Delete this appointment from history? This will hide it (soft delete)."
+    );
+    if (!yes) return;
+
+    // Optimistic remove
+    const prevRows = rows;
+    const prevTotal = total;
+
+    setRows((r) => r.filter((x) => x.id !== row.id));
+    setTotal((t) => Math.max(0, t - 1));
+
+    try {
+      await softDeleteAppointment(row.id); // flips display=false
+      // If page becomes empty and not the first page, go back one page and refetch
+      if (rows.length === 1 && page > 1) {
+        setPage((p) => p - 1);
+      } else {
+        await fetchPage(page, pageSize, search);
+      }
+    } catch (e: any) {
+      // Roll back optimistic change
+      setRows(prevRows);
+      setTotal(prevTotal);
+      alert(e?.message ?? "Failed to delete appointment.");
+    }
   };
 
   return (
