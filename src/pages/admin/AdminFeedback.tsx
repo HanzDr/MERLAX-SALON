@@ -1,4 +1,3 @@
-// AdminFeedback.tsx
 import { useMemo, useState, useEffect, useRef } from "react";
 import CategorizeForm from "@/features/feedback/components/ui/categorize-feedback-form";
 import FeedbackCard from "@/features/feedback/components/ui/feedback-card";
@@ -36,7 +35,6 @@ function ConfirmDeleteModal({
 }: ConfirmDeleteModalProps) {
   const dialogRef = useRef<HTMLDivElement | null>(null);
 
-  // Close on Esc
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
@@ -56,13 +54,11 @@ function ConfirmDeleteModal({
       aria-labelledby="confirm-title"
       aria-describedby="confirm-desc"
     >
-      {/* backdrop */}
       <div
         className="absolute inset-0 bg-black/40"
         onClick={onCancel}
         aria-hidden="true"
       />
-      {/* dialog */}
       <div
         ref={dialogRef}
         className="relative z-[101] w-[92%] max-w-md rounded-2xl bg-white p-6 shadow-2xl"
@@ -71,7 +67,7 @@ function ConfirmDeleteModal({
           Hide this feedback?
         </h2>
         <p id="confirm-desc" className="mt-2 text-sm text-gray-600">
-          This will set delete the feedback for
+          This will hide the feedback for
           {name ? (
             <>
               {" "}
@@ -116,24 +112,20 @@ export default function AdminFeedback() {
 
   const [modal, setModal] = useState<ModalState>(null);
 
-  // Delete confirmation state
   const [deleteTarget, setDeleteTarget] = useState<{
     id: string;
     name?: string;
   } | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
-  // Toolbar state
   const [q, setQ] = useState("");
   const [category, setCategory] = useState<FeedbackCategory | "ALL">("ALL");
-  const [minRating, setMinRating] = useState<number | "ALL">("ALL");
+  const [rating, setRating] = useState<number | "ALL">("ALL");
   const [sortBy, setSortBy] = useState<SortKey>("date-desc");
 
-  // Simple client-side pagination
   const PAGE_SIZE = 8;
   const [page, setPage] = useState(1);
 
-  // 🔄 Load from Supabase using your hook methods
   useEffect(() => {
     if (category !== "ALL") {
       getFeedbackByCategory(category).catch(console.error);
@@ -142,10 +134,9 @@ export default function AdminFeedback() {
     }
   }, [category, getAllFeedback, getFeedbackByCategory]);
 
-  // Reset to page 1 on any filter/search change
   useEffect(() => {
     setPage(1);
-  }, [q, category, minRating, sortBy]);
+  }, [q, category, rating, sortBy]);
 
   const onClose = () => setModal(null);
 
@@ -171,9 +162,13 @@ export default function AdminFeedback() {
   };
 
   const filtered = useMemo(() => {
+    // start with all fetched rows
     let list = feedback ?? [];
 
-    // Search over name + description
+    // 1) Only show cards where the customer has responded
+    list = list.filter((f) => f.customerHasResponded === true);
+
+    // 2) Search
     const qLower = q.trim().toLowerCase();
     if (qLower) {
       list = list.filter((f) => {
@@ -187,17 +182,17 @@ export default function AdminFeedback() {
       });
     }
 
-    // Optional client-side category filter
+    // 3) Category filter
     if (category !== "ALL") {
       list = list.filter((f) => (f.category ?? null) === category);
     }
 
-    // Min rating
-    if (minRating !== "ALL") {
-      list = list.filter((f) => (Number(f.rating) || 0) >= Number(minRating));
+    // 4) Rating filter
+    if (rating !== "ALL") {
+      list = list.filter((f) => (Number(f.rating) || 0) === Number(rating));
     }
 
-    // Sorting
+    // 5) Sort
     list = [...list].sort((a, b) => {
       const ra = Number(a.rating) || 0;
       const rb = Number(b.rating) || 0;
@@ -218,7 +213,7 @@ export default function AdminFeedback() {
     });
 
     return list;
-  }, [feedback, q, category, minRating, sortBy]);
+  }, [feedback, q, category, rating, sortBy]);
 
   const total = filtered.length;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
@@ -269,15 +264,15 @@ export default function AdminFeedback() {
           </select>
         </div>
 
-        {/* Min Rating */}
+        {/* Rating (exact) */}
         <div className="md:col-span-2">
           <label className="block text-xs font-medium text-gray-600 mb-1">
-            Min Rating
+            Rating
           </label>
           <select
-            value={minRating}
+            value={rating}
             onChange={(e) =>
-              setMinRating(
+              setRating(
                 e.target.value === "ALL" ? "ALL" : Number(e.target.value)
               )
             }
@@ -286,7 +281,7 @@ export default function AdminFeedback() {
             <option value="ALL">All</option>
             {[5, 4, 3, 2, 1].map((r) => (
               <option key={r} value={r}>
-                {r}+
+                {r}
               </option>
             ))}
           </select>
@@ -327,9 +322,7 @@ export default function AdminFeedback() {
           <div className="mb-4 flex flex-wrap items-center justify-between gap-2 text-sm text-gray-600">
             <span>
               Showing <b>{pageItems.length}</b> of <b>{total}</b> feedback
-              {q || category !== "ALL" || minRating !== "ALL"
-                ? " (filtered)"
-                : ""}
+              {q || category !== "ALL" || rating !== "ALL" ? " (filtered)" : ""}
             </span>
             {totalPages > 1 && (
               <div className="inline-flex items-center gap-2">
@@ -368,6 +361,8 @@ export default function AdminFeedback() {
                 const name = [f.firstName, f.middleName, f.lastName]
                   .filter(Boolean)
                   .join(" ");
+                const adminResponded = f.adminHasResponded === true;
+
                 return (
                   <FeedbackCard
                     key={f.feedbackId}
@@ -379,6 +374,7 @@ export default function AdminFeedback() {
                     description={f.description}
                     category={f.category}
                     rating={f.rating}
+                    adminResponded={adminResponded}
                     onCategorize={() =>
                       setModal({ type: "CATEGORIZE", feedbackId: f.feedbackId })
                     }
@@ -446,7 +442,6 @@ export default function AdminFeedback() {
             setDeleteTarget(null);
           } catch (e) {
             console.error(e);
-            // You can surface errors via toast/snackbar here
             setIsDeleting(false);
           }
         }}

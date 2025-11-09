@@ -14,17 +14,27 @@ import type {
   FetchDiscountsResult,
 } from "../types/PromoManagementTypes";
 
-/* utils */
-function isoDate(d: Date | string) {
+/* ------------------------- Helpers ------------------------- */
+
+function isoDate(d: Date | string | null | undefined) {
+  if (!d) return null;
   const dt = typeof d === "string" ? new Date(d) : d;
   return new Date(dt).toISOString().slice(0, 10);
+}
+const toStr = (v: unknown) => (v == null ? "" : String(v));
+
+/* Dedup + stringify IDs */
+function normIds(ids?: unknown[]): string[] {
+  return Array.from(
+    new Set((ids ?? []).map((x) => toStr(x).trim()).filter(Boolean))
+  );
 }
 
 const usePromoManagement = () => {
   const [packages, setPackages] = useState<PackageRow[]>([]);
   const [discounts, setDiscounts] = useState<DiscountRow[]>([]);
 
-  /* ------------------------- Package CRUD (existing) ------------------------- */
+  /* ------------------------- PACKAGE CRUD ------------------------- */
 
   const createPackage = useCallback(
     async (
@@ -32,7 +42,7 @@ const usePromoManagement = () => {
       expectedDuration: number
     ): Promise<CreateResult> => {
       try {
-        const serviceIds = Array.from(new Set(form.included_services));
+        const serviceIds = normIds(form.included_services);
 
         const { data: pkg, error: pkgErr } = await supabase
           .from("Package")
@@ -66,14 +76,8 @@ const usePromoManagement = () => {
         }
 
         return { success: true, packageId };
-      } catch (err: unknown) {
-        const message =
-          err instanceof Error
-            ? err.message
-            : typeof err === "string"
-            ? err
-            : JSON.stringify(err);
-        return { success: false, message };
+      } catch (err: any) {
+        return { success: false, message: err?.message ?? String(err) };
       }
     },
     []
@@ -86,7 +90,7 @@ const usePromoManagement = () => {
       expectedDuration: number
     ): Promise<UpdateResult> => {
       try {
-        const serviceIds = Array.from(new Set(form.included_services));
+        const serviceIds = normIds(form.included_services);
 
         const { error: pkgErr } = await supabase
           .from("Package")
@@ -119,14 +123,8 @@ const usePromoManagement = () => {
         }
 
         return { success: true };
-      } catch (err: unknown) {
-        const message =
-          err instanceof Error
-            ? err.message
-            : typeof err === "string"
-            ? err
-            : JSON.stringify(err);
-        return { success: false, message };
+      } catch (err: any) {
+        return { success: false, message: err?.message ?? String(err) };
       }
     },
     []
@@ -147,100 +145,81 @@ const usePromoManagement = () => {
 
       const servicesMap = new Map<string, string[]>();
       (svcRows ?? []).forEach((row) => {
-        if (!servicesMap.has(row.package_id))
-          servicesMap.set(row.package_id, []);
-        servicesMap.get(row.package_id)!.push(row.service_id);
+        const k = toStr(row.package_id);
+        const v = toStr(row.service_id);
+        if (!k || !v) return;
+        if (!servicesMap.has(k)) servicesMap.set(k, []);
+        servicesMap.get(k)!.push(v);
       });
 
       const merged: PackageRow[] = (pkgRows ?? []).map((p: any) => ({
-        package_id: p.package_id,
-        name: p.name,
+        package_id: toStr(p.package_id),
+        name: toStr(p.name),
         status: p.status,
         price: p.price,
         start_date: p.start_date,
         end_date: p.end_date,
-        expected_duration:
-          typeof p.expected_duration === "number"
-            ? p.expected_duration
-            : Number(p.expected_duration ?? 0) || 0,
+        expected_duration: Number(p.expected_duration ?? 0),
         included_services: Array.from(
-          new Set(servicesMap.get(p.package_id) ?? [])
+          new Set(servicesMap.get(toStr(p.package_id)) ?? [])
         ),
         display: p.display,
       }));
 
       setPackages(merged);
       return { success: true, data: merged } as const;
-    } catch (err: unknown) {
-      const message =
-        err instanceof Error
-          ? err.message
-          : typeof err === "string"
-          ? err
-          : JSON.stringify(err);
-      return { success: false, message } as const;
+    } catch (err: any) {
+      return { success: false, message: err?.message ?? String(err) } as const;
     }
   }, []);
 
   const deletePackage = useCallback(
     async (packageId: string): Promise<DeleteResult> => {
       try {
-        const { error: svcDelErr } = await supabase
+        await supabase
           .from("PackageServices")
           .delete()
           .eq("package_id", packageId);
-        if (svcDelErr) throw svcDelErr;
-
-        const { error: pkgUpdErr } = await supabase
+        await supabase
           .from("Package")
           .update({ display: false })
           .eq("package_id", packageId);
-        if (pkgUpdErr) throw pkgUpdErr;
-
         return { success: true };
-      } catch (err: unknown) {
-        const message =
-          err instanceof Error
-            ? err.message
-            : typeof err === "string"
-            ? err
-            : JSON.stringify(err);
-        return { success: false, message };
+      } catch (err: any) {
+        return { success: false, message: err?.message ?? String(err) };
       }
     },
     []
   );
 
-  /* ----------------------------- Discounts API ----------------------------- */
+  /* ----------------------------- DISCOUNTS API ----------------------------- */
 
   const addDiscount = useCallback(
     async (form: DiscountFormData): Promise<CreateDiscountResult> => {
       try {
-        const targetIds = Array.from(new Set(form.included_services ?? []));
+        const targetIds = normIds(form.included_services);
+        const amountOfUses: number | null =
+          (form as any).amount_of_uses ?? (form as any).uses ?? null;
 
-        // 1) Insert Discounts
         const { data: disc, error: discErr } = await supabase
           .from("Discounts")
           .insert({
             name: form.name,
-            type: form.type,
+            type: form.type, // "Fixed" | "Percentage"
             value: form.value,
-            applies_to: form.applies_to,
-            start_date:
-              form.start_date == null ? null : isoDate(form.start_date),
-            end_date: form.end_date == null ? null : isoDate(form.end_date),
-            amount_of_uses:
-              form.amount_of_uses == null ? null : form.amount_of_uses,
+            applies_to: form.applies_to as AppliesTo, // "Service" | "Package"
+            start_date: isoDate(form.start_date),
+            end_date: isoDate(form.end_date),
+            amount_of_uses: amountOfUses,
             status: form.status,
             display: true,
           })
           .select("discount_id")
           .single();
-
         if (discErr) throw discErr;
-        const discountId = (disc as { discount_id: string }).discount_id;
 
-        // 2) Insert DiscountServices
+        const discountId = toStr((disc as any).discount_id);
+
         if (targetIds.length) {
           const rows =
             form.applies_to === "Service"
@@ -258,31 +237,17 @@ const usePromoManagement = () => {
           const { error: linkErr } = await supabase
             .from("DiscountServices")
             .insert(rows);
-
-          if (linkErr) {
-            await supabase
-              .from("Discounts")
-              .delete()
-              .eq("discount_id", discountId);
-            throw linkErr;
-          }
+          if (linkErr) throw linkErr;
         }
 
         return { success: true, discountId };
-      } catch (err: unknown) {
-        const message =
-          err instanceof Error
-            ? err.message
-            : typeof err === "string"
-            ? err
-            : JSON.stringify(err);
-        return { success: false, message };
+      } catch (err: any) {
+        return { success: false, message: err?.message ?? String(err) };
       }
     },
     []
   );
 
-  /** Fetch discounts where display === true and hydrate included_services */
   const fetchDiscounts =
     useCallback(async (): Promise<FetchDiscountsResult> => {
       try {
@@ -297,34 +262,30 @@ const usePromoManagement = () => {
           .select("discount_id, service_id, package_id");
         if (linkErr) throw linkErr;
 
-        // group links by discount_id
         const linkMap = new Map<
           string,
           Array<{ service_id: string | null; package_id: string | null }>
         >();
         (linkRows ?? []).forEach((r: any) => {
-          const key = String(r.discount_id);
+          const key = toStr(r.discount_id);
+          if (!key) return;
           if (!linkMap.has(key)) linkMap.set(key, []);
           linkMap.get(key)!.push({
-            service_id: r.service_id ?? null,
-            package_id: r.package_id ?? null,
+            service_id: r.service_id ? toStr(r.service_id) : null,
+            package_id: r.package_id ? toStr(r.package_id) : null,
           });
         });
 
         const merged: DiscountRow[] = (discRows ?? []).map((d: any) => {
-          const links = linkMap.get(String(d.discount_id)) ?? [];
+          const id = toStr(d.discount_id);
+          const links = linkMap.get(id) ?? [];
           const ids =
-            d.applies_to === "Service"
-              ? (links
-                  .map((l) => (l.service_id ? String(l.service_id) : null))
-                  .filter(Boolean) as string[])
-              : (links
-                  .map((l) => (l.package_id ? String(l.package_id) : null))
-                  .filter(Boolean) as string[]);
-
+            (d.applies_to as AppliesTo) === "Service"
+              ? (links.map((l) => l.service_id).filter(Boolean) as string[])
+              : (links.map((l) => l.package_id).filter(Boolean) as string[]);
           return {
-            discount_id: String(d.discount_id),
-            name: String(d.name),
+            discount_id: id,
+            name: toStr(d.name),
             type: d.type as DiscountType,
             value: Number(d.value),
             applies_to: d.applies_to as AppliesTo,
@@ -334,45 +295,95 @@ const usePromoManagement = () => {
               d.amount_of_uses == null ? null : Number(d.amount_of_uses),
             status: d.status as "Active" | "Inactive",
             included_services: Array.from(new Set(ids)),
-            display: d.display ?? true,
+            display: !!d.display,
           };
         });
 
         setDiscounts(merged);
         return { success: true, data: merged };
-      } catch (err: unknown) {
-        const message =
-          err instanceof Error
-            ? err.message
-            : typeof err === "string"
-            ? err
-            : JSON.stringify(err);
-        return { success: false, message };
+      } catch (err: any) {
+        return { success: false, message: err?.message ?? String(err) };
       }
     }, []);
 
-  /** Soft delete discount: update display=false */
+  const updateDiscount = useCallback(
+    async (
+      discountId: string,
+      form: DiscountFormData
+    ): Promise<UpdateResult> => {
+      try {
+        const id = toStr(discountId);
+        const targetIds = normIds(form.included_services);
+        const amountOfUses: number | null =
+          (form as any).amount_of_uses ?? (form as any).uses ?? null;
+
+        // 1) Update main row
+        const { error: updErr } = await supabase
+          .from("Discounts")
+          .update({
+            name: form.name,
+            type: form.type,
+            value: form.value,
+            applies_to: form.applies_to as AppliesTo,
+            start_date: isoDate(form.start_date),
+            end_date: isoDate(form.end_date),
+            amount_of_uses: amountOfUses,
+            status: form.status,
+          })
+          .eq("discount_id", id);
+        if (updErr) throw updErr;
+
+        // 2) Replace all links (delete first to avoid dup / wrong column)
+        const { error: delErr } = await supabase
+          .from("DiscountServices")
+          .delete()
+          .eq("discount_id", id);
+        if (delErr) throw delErr;
+
+        if (targetIds.length) {
+          const rows =
+            form.applies_to === "Service"
+              ? targetIds.map((service_id) => ({
+                  discount_id: id,
+                  service_id,
+                  package_id: null,
+                }))
+              : targetIds.map((package_id) => ({
+                  discount_id: id,
+                  service_id: null,
+                  package_id,
+                }));
+
+          const { error: insErr } = await supabase
+            .from("DiscountServices")
+            .insert(rows);
+          if (insErr) throw insErr;
+        }
+
+        // 3) Force a fresh read so UI reflects changes deterministically
+        await fetchDiscounts();
+
+        return { success: true };
+      } catch (err: any) {
+        return { success: false, message: err?.message ?? String(err) };
+      }
+    },
+    [fetchDiscounts]
+  );
+
   const deleteDiscount = useCallback(
     async (discountId: string): Promise<DeleteResult> => {
       try {
-        const { error } = await supabase
+        await supabase
           .from("Discounts")
           .update({ display: false })
           .eq("discount_id", discountId);
-        if (error) throw error;
-
         setDiscounts((prev) =>
           prev.filter((d) => d.discount_id !== discountId)
         );
         return { success: true };
-      } catch (err: unknown) {
-        const message =
-          err instanceof Error
-            ? err.message
-            : typeof err === "string"
-            ? err
-            : JSON.stringify(err);
-        return { success: false, message };
+      } catch (err: any) {
+        return { success: false, message: err?.message ?? String(err) };
       }
     },
     []
@@ -390,7 +401,8 @@ const usePromoManagement = () => {
     discounts,
     fetchDiscounts,
     addDiscount,
-    deleteDiscount, // "update" == soft-delete by setting display=false
+    updateDiscount,
+    deleteDiscount,
   };
 };
 

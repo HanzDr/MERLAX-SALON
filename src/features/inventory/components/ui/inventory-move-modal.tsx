@@ -3,7 +3,7 @@ import { X, Plus, Trash2 } from "lucide-react";
 
 /* ------------------------- Types ------------------------- */
 export type MoveRow = {
-  tempId: string; // temporary key for UI rendering
+  tempId: string;
   productId: string;
   movementType: "ADD" | "DEDUCT";
   reason: string;
@@ -20,24 +20,24 @@ export type InventoryMoveModalProps = {
   onRemoveRow: (tempId: string) => void;
   onChange: (tempId: string, field: keyof MoveRow, value: string) => void;
 
-  // include packaging + currentQty so we can render "name - packaging" and validate against stock
   productOptions: {
     id: string;
     name: string;
     packaging?: string | null;
-    currentQty: number; // <-- NEW
+    currentQty: number;
   }[];
   isSaving?: boolean;
 };
 
-/* ------------------------- Component ------------------------- */
+/* ------------------------- UI helpers ------------------------- */
 const baseField =
-  "rounded-lg border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-black/10";
+  "rounded-xl border border-zinc-200 bg-white/80 px-3 py-2 text-sm shadow-sm outline-none focus:ring-2 focus:ring-amber-200";
 const errorField = "border-rose-400 focus:ring-rose-200";
 
 type RowErrors = Partial<Record<keyof MoveRow, string>>;
 type ErrorState = Record<string, RowErrors>;
 
+/* ------------------------- Component ------------------------- */
 const InventoryMoveModal: React.FC<InventoryMoveModalProps> = ({
   open,
   onClose,
@@ -68,34 +68,29 @@ const InventoryMoveModal: React.FC<InventoryMoveModalProps> = ({
     for (const r of rows) {
       const errs: RowErrors = {};
 
-      // Product exists
       if (!r.productId) {
         errs.productId = "Please select a product.";
       } else if (!productIdSet.has(r.productId)) {
         errs.productId = "Selected product is invalid.";
       }
 
-      // Type
       if (!r.movementType) {
         errs.movementType = "Please choose a type.";
-      } else if (r.movementType !== "ADD" && r.movementType !== "DEDUCT") {
+      } else if (!["ADD", "DEDUCT"].includes(r.movementType)) {
         errs.movementType = "Type must be ADD or DEDUCT.";
       }
 
-      // Reason
       if (!r.reason) {
         errs.reason = "Please choose a reason.";
       }
 
-      // Quantity
       const qty = Number(r.quantity);
-      if (r.quantity === "" || isNaN(qty)) {
+      if (r.quantity === "" || Number.isNaN(qty)) {
         errs.quantity = "Enter a valid quantity.";
       } else if (qty <= 0) {
         errs.quantity = "Quantity must be greater than 0.";
       }
 
-      // Over-deduct check
       if (!errs.quantity && r.movementType === "DEDUCT" && r.productId) {
         const available = qtyById.get(r.productId);
         if (typeof available === "number" && qty > available) {
@@ -103,9 +98,7 @@ const InventoryMoveModal: React.FC<InventoryMoveModalProps> = ({
         }
       }
 
-      if (Object.keys(errs).length) {
-        nextErrors[r.tempId] = errs;
-      }
+      if (Object.keys(errs).length) nextErrors[r.tempId] = errs;
     }
 
     setRowErrors(nextErrors);
@@ -140,37 +133,59 @@ const InventoryMoveModal: React.FC<InventoryMoveModalProps> = ({
 
   if (!open) return null;
 
+  /* ------------- little computed details for the header ------------- */
+  const addCount = rows.filter((r) => r.movementType === "ADD").length;
+  const deductCount = rows.filter((r) => r.movementType === "DEDUCT").length;
+
   return (
     <div
-      className="fixed inset-0 z-[110] flex items-center justify-center"
+      className="fixed inset-0 z-[130] grid place-items-center"
       role="dialog"
       aria-modal="true"
       aria-labelledby="inventory-move-title"
     >
       {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+      <div
+        className="absolute inset-0 bg-zinc-900/50 backdrop-blur-sm"
+        onClick={onClose}
+      />
 
-      {/* Modal */}
-      <div className="relative z-[111] w-[95%] max-w-4xl rounded-2xl bg-white p-6 shadow-2xl">
+      {/* Modal shell */}
+      <div className="relative z-[131] w-[96%] max-w-5xl overflow-hidden rounded-2xl border border-white/20 bg-white/90 shadow-2xl backdrop-blur-xl">
         {/* Header */}
-        <div className="mb-4 flex items-center justify-between">
-          <h2
-            id="inventory-move-title"
-            className="text-2xl font-bold text-gray-900"
-          >
-            Inventory Movement
-          </h2>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-full p-1 hover:bg-gray-100"
-          >
-            <X className="h-5 w-5 text-gray-500" />
-          </button>
+        <div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-zinc-200/60 bg-white/70 px-5 py-4 backdrop-blur-xl">
+          <div>
+            <h2
+              id="inventory-move-title"
+              className="text-xl sm:text-2xl font-bold text-zinc-900"
+            >
+              Inventory Movement
+            </h2>
+            <p className="text-xs text-zinc-500">
+              Create one or more stock adjustments in a single batch
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="hidden sm:inline-flex items-center gap-1 rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-200">
+              +ADD: {addCount}
+            </span>
+            <span className="hidden sm:inline-flex items-center gap-1 rounded-full bg-rose-50 px-3 py-1 text-xs font-semibold text-rose-700 ring-1 ring-inset ring-rose-200">
+              −DEDUCT: {deductCount}
+            </span>
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-xl p-2 text-zinc-500 hover:bg-zinc-100"
+              aria-label="Close"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
         </div>
 
-        {/* Table header */}
-        <div className="mb-2 grid grid-cols-5 gap-2 text-sm font-semibold text-gray-600">
+        {/* Column labels */}
+        <div className="hidden grid-cols-[2fr_110px_160px_140px_80px] gap-3 px-5 py-3 text-[11px] font-semibold uppercase tracking-wide text-zinc-500 sm:grid md:grid-cols-[2fr_130px_200px_160px_90px]">
           <div>Product</div>
           <div>Type</div>
           <div>Reason</div>
@@ -179,10 +194,15 @@ const InventoryMoveModal: React.FC<InventoryMoveModalProps> = ({
         </div>
 
         {/* Rows */}
-        <div className="max-h-[350px] space-y-2 overflow-y-auto pr-1">
+        <div className="max-h-[60vh] space-y-3 overflow-y-auto px-5 pb-5">
           {rows.length === 0 ? (
-            <div className="rounded-xl border py-8 text-center text-gray-400">
-              No items added yet.
+            <div className="my-6 grid place-items-center rounded-2xl border border-dashed border-amber-300/60 bg-amber-50/50 p-8 text-center">
+              <div className="text-sm font-medium text-amber-900">
+                No items added yet
+              </div>
+              <p className="mt-1 text-xs text-amber-700/80">
+                Click “Add Item” to start a movement.
+              </p>
             </div>
           ) : (
             rows.map((r) => {
@@ -194,10 +214,18 @@ const InventoryMoveModal: React.FC<InventoryMoveModalProps> = ({
               return (
                 <div
                   key={r.tempId}
-                  className="grid grid-cols-5 items-start gap-2 rounded-xl border p-2"
+                  className={[
+                    "grid gap-3 rounded-2xl border border-zinc-200 bg-white/80 p-3 shadow-sm transition-colors",
+                    "hover:bg-amber-50/40",
+                    "sm:grid-cols-[2fr_110px_160px_1fr_80px]",
+                    "md:grid-cols-[2fr_130px_200px_1fr_90px]",
+                  ].join(" ")}
                 >
                   {/* Product */}
                   <div>
+                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-zinc-500 sm:hidden">
+                      Product
+                    </label>
                     <select
                       className={`${baseField} ${
                         errs.productId ? errorField : ""
@@ -216,7 +244,7 @@ const InventoryMoveModal: React.FC<InventoryMoveModalProps> = ({
                       {productOptions.map((p) => {
                         const label =
                           p.packaging && p.packaging.trim().length > 0
-                            ? `${p.name} - ${p.packaging}`
+                            ? `${p.name} – ${p.packaging}`
                             : p.name;
                         return (
                           <option key={p.id} value={p.id} title={label}>
@@ -225,6 +253,11 @@ const InventoryMoveModal: React.FC<InventoryMoveModalProps> = ({
                         );
                       })}
                     </select>
+                    {typeof available === "number" && (
+                      <div className="mt-1 text-[11px] text-zinc-500">
+                        Available: {available}
+                      </div>
+                    )}
                     {errs.productId && (
                       <p
                         id={`${r.tempId}-prod-err`}
@@ -233,36 +266,41 @@ const InventoryMoveModal: React.FC<InventoryMoveModalProps> = ({
                         {errs.productId}
                       </p>
                     )}
-                    {typeof available === "number" && (
-                      <p className="mt-1 text-[11px] text-gray-500">
-                        Available: {available}
-                      </p>
-                    )}
                   </div>
 
-                  {/* Movement type */}
+                  {/* Movement type — pill select */}
                   <div>
-                    <select
-                      className={`${baseField} ${
-                        errs.movementType ? errorField : ""
-                      } w-full`}
-                      value={r.movementType}
-                      onChange={(e) =>
-                        handleChange(
-                          r.tempId,
-                          "movementType",
-                          e.target.value as "ADD" | "DEDUCT"
-                        )
-                      }
-                      aria-invalid={!!errs.movementType}
-                      aria-describedby={
-                        errs.movementType ? `${r.tempId}-type-err` : undefined
-                      }
-                      required
-                    >
-                      <option value="ADD">ADD</option>
-                      <option value="DEDUCT">DEDUCT</option>
-                    </select>
+                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-zinc-500 sm:hidden">
+                      Type
+                    </label>
+                    <div className="grid grid-cols-2 gap-1 rounded-xl bg-zinc-100 p-1">
+                      {(["ADD", "DEDUCT"] as const).map((opt) => {
+                        const active = r.movementType === opt;
+                        const common =
+                          "rounded-lg px-2 py-2 text-center text-xs font-semibold transition";
+                        const activeCls =
+                          opt === "ADD"
+                            ? "bg-emerald-600 text-white shadow"
+                            : "bg-rose-600 text-white shadow";
+                        const idleCls =
+                          "bg-white text-zinc-700 hover:bg-zinc-50";
+                        return (
+                          <button
+                            key={opt}
+                            type="button"
+                            onClick={() =>
+                              handleChange(r.tempId, "movementType", opt)
+                            }
+                            className={`${common} ${
+                              active ? activeCls : idleCls
+                            }`}
+                            aria-pressed={active}
+                          >
+                            {opt}
+                          </button>
+                        );
+                      })}
+                    </div>
                     {errs.movementType && (
                       <p
                         id={`${r.tempId}-type-err`}
@@ -275,6 +313,9 @@ const InventoryMoveModal: React.FC<InventoryMoveModalProps> = ({
 
                   {/* Reason */}
                   <div>
+                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-zinc-500 sm:hidden">
+                      Reason
+                    </label>
                     <select
                       className={`${baseField} ${
                         errs.reason ? errorField : ""
@@ -308,6 +349,9 @@ const InventoryMoveModal: React.FC<InventoryMoveModalProps> = ({
 
                   {/* Quantity */}
                   <div>
+                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-zinc-500 sm:hidden">
+                      Quantity
+                    </label>
                     <input
                       type="number"
                       min="1"
@@ -336,14 +380,15 @@ const InventoryMoveModal: React.FC<InventoryMoveModalProps> = ({
                   </div>
 
                   {/* Delete */}
-                  <div className="flex justify-center pt-2">
+                  <div className="flex items-center justify-center sm:justify-end">
                     <button
                       type="button"
-                      className="p-2 text-red-600 hover:text-red-700"
+                      className="inline-flex items-center gap-1 rounded-lg border border-rose-200 px-3 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-50 active:scale-[0.99]"
                       onClick={() => onRemoveRow(r.tempId)}
                       aria-label="Remove row"
                     >
-                      <Trash2 className="h-5 w-5" />
+                      <Trash2 className="h-4 w-4" />
+                      Remove
                     </button>
                   </div>
                 </div>
@@ -352,35 +397,39 @@ const InventoryMoveModal: React.FC<InventoryMoveModalProps> = ({
           )}
         </div>
 
-        {/* Add button */}
-        <div className="mt-4">
-          <button
-            type="button"
-            onClick={onAddRow}
-            className="inline-flex items-center gap-2 text-sm font-medium text-amber-600 hover:text-amber-700"
-          >
-            <Plus className="h-4 w-4" /> Add Another Product
-          </button>
-        </div>
+        {/* Bottom bar */}
+        <div className="flex flex-col gap-3 border-t border-zinc-200/60 bg-white/70 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onAddRow}
+              className="inline-flex items-center gap-2 rounded-xl border border-amber-300/60 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-800 shadow-sm hover:bg-amber-100 active:scale-[0.99] transition"
+            >
+              <Plus className="h-4 w-4" /> Add Item
+            </button>
+            <span className="text-xs text-zinc-500">
+              {rows.length} {rows.length === 1 ? "line" : "lines"}
+            </span>
+          </div>
 
-        {/* Footer */}
-        <div className="mt-6 flex justify-end gap-3">
-          <button
-            type="button"
-            className="rounded-xl bg-black px-5 py-2 text-sm font-semibold text-white hover:opacity-90"
-            onClick={onClose}
-            disabled={isSaving}
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            className="rounded-xl bg-amber-400 px-5 py-2 text-sm font-semibold text-white hover:bg-amber-500 disabled:opacity-60"
-            onClick={handleSubmit}
-            disabled={isSaving || rows.length === 0}
-          >
-            {isSaving ? "Saving…" : "Save"}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              className="rounded-xl border border-zinc-300 bg-white px-5 py-2 text-sm font-semibold text-zinc-800 hover:bg-zinc-50"
+              onClick={onClose}
+              disabled={isSaving}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="rounded-xl bg-amber-500 px-5 py-2 text-sm font-semibold text-white shadow-sm hover:bg-amber-600 disabled:opacity-60"
+              onClick={handleSubmit}
+              disabled={isSaving || rows.length === 0}
+            >
+              {isSaving ? "Saving…" : "Save Movement"}
+            </button>
+          </div>
         </div>
       </div>
     </div>

@@ -7,19 +7,40 @@ import type {
 import type { UpdatePayload } from "../utils/feedback-types";
 
 // Store the data-only version of the card (no UI handlers)
-type FeedbackItem = Omit<FeedbackCardProps, "onCategorize" | "onRespond">;
+type FeedbackItem = Omit<FeedbackCardProps, "onCategorize" | "onRespond"> & {
+  customerHasResponded: boolean;
+  adminHasResponded: boolean;
+};
 
-const COLUMNS =
-  "feedback_id, appointment_id, customer_id, firstName, middleName, lastName, rating, category, admin_response, customer_response, created_at, isDisplay";
+const COLUMNS = [
+  "feedback_id",
+  "appointment_id",
+  "customer_id",
+  "firstName",
+  "middleName",
+  "lastName",
+  "rating",
+  "category",
+  "admin_response",
+  "customer_response",
+  "created_at",
+  "isDisplay",
+  // new booleans
+  "customerHasResponded",
+  "adminHasResponded",
+].join(", ");
 
 /** DB row → UI shape (camelCase with safe fallbacks) */
 function mapRowToItem(r: any): FeedbackItem {
   const category: FeedbackCategory =
     (r.category as FeedbackCategory | null) ?? "Neutral";
 
+  const customerHasResponded: boolean = Boolean(r.customerHasResponded);
+  const adminHasResponded: boolean = Boolean(r.adminHasResponded);
+
   return {
     feedbackId: r.feedback_id,
-    // keep appointmentId around (TS ignores extra keys not present in FeedbackItem)
+    // keep appointmentId around
     // @ts-ignore
     appointmentId: r.appointment_id ?? null,
 
@@ -27,14 +48,15 @@ function mapRowToItem(r: any): FeedbackItem {
     middleName: r.middleName ?? "",
     lastName: r.lastName ?? "",
 
-    // use created_at as the card date (format at render)
     date: r.created_at,
-
-    // prefer customer's response for description, else admin's
     description: r.customer_response ?? r.admin_response ?? "",
 
     category,
     rating: Number(r.rating ?? 0),
+
+    // new flags
+    customerHasResponded,
+    adminHasResponded,
   };
 }
 
@@ -140,7 +162,11 @@ const useFeedback = () => {
     []
   );
 
-  /** Create feedback for an appointment (idempotent) */
+  /**
+   * Create feedback for an appointment (idempotent).
+   * ✅ Fetches Appointments first to get the current customer_id and names,
+   *    then stores that customer_id into Feedback.customer_id.
+   */
   const createFeedbackForAppointment = useCallback(
     async (appointment_id: string) => {
       // Prevent duplicates
@@ -155,7 +181,7 @@ const useFeedback = () => {
         return { feedbackId: existing[0].feedback_id };
       }
 
-      // Pull isDisplay name from Appointments or Customers
+      // Pull display name & customer_id from Appointments
       const { data: aRow, error: aErr } = await supabase
         .from("Appointments")
         .select("customer_id, firstName, middleName, lastName")
@@ -169,6 +195,7 @@ const useFeedback = () => {
       let lastName: string | null = aRow?.lastName ?? null;
       const customer_id: string | null = aRow?.customer_id ?? null;
 
+      // Prefer canonical names from Customers
       if (customer_id) {
         const { data: cRow, error: cErr } = await supabase
           .from("Customers")
@@ -193,7 +220,10 @@ const useFeedback = () => {
         category: null,
         admin_response: null,
         customer_response: null,
-        isDisplay: true, // ← ensure new rows are visible
+        isDisplay: true,
+        // initialize flags
+        customerHasResponded: false,
+        adminHasResponded: false,
       };
 
       const { data, error: insErr } = await supabase
@@ -219,8 +249,8 @@ const useFeedback = () => {
 
     type Patch =
       | { category: FeedbackCategory | null }
-      | { admin_response: string | null }
-      | { customer_response: string | null };
+      | { admin_response: string | null; adminHasResponded?: boolean }
+      | { customer_response: string | null; customerHasResponded?: boolean };
 
     let patch: Patch;
 
@@ -229,9 +259,19 @@ const useFeedback = () => {
     } else {
       const isCustomer = updateForm.respondAs === "customer";
       const col = isCustomer ? "customer_response" : "admin_response";
-      patch = {
-        [col]: (updateForm.comment ?? "").trim() || null,
-      } as Patch;
+      const text = (updateForm.comment ?? "").trim() || null;
+
+      if (isCustomer) {
+        patch = {
+          customer_response: text,
+          customerHasResponded: Boolean(text),
+        };
+      } else {
+        patch = {
+          admin_response: text,
+          adminHasResponded: Boolean(text),
+        };
+      }
     }
 
     const { data, error: supaErr } = await supabase

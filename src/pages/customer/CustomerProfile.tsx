@@ -1,10 +1,45 @@
 // components/CustomerProfile.tsx
-
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import useUserProfile from "@/features/auth/hooks/UseUserProfile";
 import { FaEye, FaEyeSlash } from "react-icons/fa";
+import { Loader2 } from "lucide-react";
 import { type Customer } from "@/features/auth/types/AuthTypes";
 
+/* -------------------- helpers -------------------- */
+const brand = { orange: "#FFB030" };
+
+function labelize(key: string) {
+  return key.replace(/([A-Z])/g, " $1").replace(/^./, (s) => s.toUpperCase());
+}
+function initials(first?: string | null, last?: string | null) {
+  const f = (first || "").trim();
+  const l = (last || "").trim();
+  const out = (f[0] || "") + (l[0] || "");
+  return (out || "CU").toUpperCase();
+}
+function niceDate(iso?: string | null) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (isNaN(+d)) return "—";
+  return d.toLocaleString("en-US", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+function scorePassword(pw: string) {
+  let s = 0;
+  if (pw.length >= 8) s++;
+  if (/[A-Z]/.test(pw)) s++;
+  if (/[a-z]/.test(pw)) s++;
+  if (/\d/.test(pw)) s++;
+  if (/[^A-Za-z0-9]/.test(pw)) s++;
+  return Math.min(s, 5);
+}
+
+/* -------------------- component -------------------- */
 const CustomerProfile = () => {
   const { user, userProfile, loading, error, updateProfile, changePassword } =
     useUserProfile();
@@ -19,20 +54,42 @@ const CustomerProfile = () => {
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
   const [passwordError, setPasswordError] = useState("");
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [changingPw, setChangingPw] = useState(false);
+
+  const [showCurrentPassword, setShowCurrentPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   useEffect(() => {
     if (userProfile) setEditForm(userProfile);
   }, [userProfile]);
 
+  const fullName = useMemo(() => {
+    const p = [
+      editForm?.firstName,
+      editForm?.middleName,
+      editForm?.lastName,
+    ].filter(Boolean);
+    return p.length ? p.join(" ") : "—";
+  }, [editForm]);
+
+  const avatar = useMemo(
+    () => initials(editForm?.firstName, editForm?.lastName),
+    [editForm?.firstName, editForm?.lastName]
+  );
+
   const handleEditChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
-    setEditForm((prev) => (prev ? { ...prev, [name]: value } : null));
+    setEditForm((prev) => (prev ? { ...prev, [name]: value } : prev));
   };
 
   const handleSaveEdit = async () => {
     if (!editForm) return;
-    const success = await updateProfile(editForm as Customer);
-    if (success) {
+    setSavingEdit(true);
+    const ok = await updateProfile(editForm as Customer);
+    setSavingEdit(false);
+    if (ok) {
       alert("Profile updated successfully!");
       setIsEditModalOpen(false);
     } else {
@@ -47,17 +104,18 @@ const CustomerProfile = () => {
       setPasswordError("Passwords do not match");
       return;
     }
-
     if (!user?.email) {
       setPasswordError("User email not found");
       return;
     }
 
+    setChangingPw(true);
     const result = await changePassword(
       user.email,
       currentPassword,
       newPassword
     );
+    setChangingPw(false);
 
     if (result.success) {
       alert("Password updated successfully");
@@ -73,243 +131,281 @@ const CustomerProfile = () => {
     }
   };
 
-  const [showCurrentPassword, setShowCurrentPassword] = useState(false);
-  const [showNewPassword, setShowNewPassword] = useState(false);
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  /* -------- loading/error -------- */
+  if (loading)
+    return (
+      <div className="flex justify-center items-center h-[80vh] text-gray-600">
+        <Loader2 className="animate-spin h-6 w-6 mr-2" />
+        Loading your profile...
+      </div>
+    );
 
-  // This is where the loading state is used when its true it will return this instead of the entire GUI
-  if (loading) return <p>Loading...</p>;
-  if (error || !editForm) return <p>{error || "No profile found."}</p>;
+  if (error || !editForm)
+    return (
+      <div className="flex justify-center items-center h-[80vh] text-red-500">
+        {error || "No profile found."}
+      </div>
+    );
 
+  /* -------------------- UI -------------------- */
   return (
-    <div
-      style={{
-        background: "#fff",
-        height: "90vh",
-        display: "flex",
-        justifyContent: "center",
-        alignItems: "center",
-      }}
-    >
-      <div
-        style={{
-          width: "100%",
-          maxWidth: "600px",
-          padding: "2rem",
-          background: "#F1F1F1",
-          borderRadius: "8px",
-        }}
-      >
-        <h1 style={{ fontSize: "2rem", fontWeight: "500" }}>My Profile</h1>
-        <p style={{ marginBottom: "2rem", color: "#666" }}>
-          Manage your personal information
-        </p>
-
-        <form style={{ display: "grid", gap: "1rem" }}>
-          {["firstName", "middleName", "lastName", "email", "phoneNumber"].map(
-            (field) => (
-              <div key={field}>
-                <label>
-                  {
-                    field
-                      .replace(/([A-Z])/g, " $1") // insert space before capital letters
-                      .replace(/^./, (str) => str.toUpperCase()) // capitalize first letter of the string
-                      .replace(/\b\w/g, (str) => str.toUpperCase()) // capitalize first letter of each word
-                  }
-                </label>
-
-                <input
-                  type="text"
-                  value={(editForm as any)[field]}
-                  readOnly
-                  style={inputStyle}
-                />
-              </div>
-            )
-          )}
-          <p>
-            Joined At:{" "}
-            {userProfile?.joined_at
-              ? new Date(userProfile.joined_at).toLocaleString("en-US", {
-                  year: "numeric",
-                  month: "short",
-                  day: "numeric",
-                  hour: "2-digit",
-                  minute: "2-digit",
-                })
-              : "—"}
-          </p>
-
-          <div style={{ display: "flex", gap: "1rem", marginTop: "1rem" }}>
-            <button
-              type="button"
-              onClick={() => setIsEditModalOpen(true)}
-              style={goldButton}
+    <div className="min-h-[90vh] bg-white p-6">
+      <div className="mx-auto w-full max-w-2xl">
+        {/* Card */}
+        <section className="bg-white rounded-xl shadow-sm ring-1 ring-gray-200">
+          {/* Header */}
+          <div className="p-6 flex items-center gap-4">
+            <div
+              className="h-12 w-12 rounded-full grid place-items-center text-white text-sm font-semibold"
+              style={{ background: brand.orange }}
             >
-              Edit Profile
-            </button>
-            <button
-              type="button"
-              onClick={() => setIsPasswordModalOpen(true)}
-              style={darkButton}
-            >
-              Change Password
-            </button>
+              {avatar}
+            </div>
+            <div className="flex-1 min-w-0">
+              <h1 className="text-xl font-semibold text-gray-900">
+                My Profile
+              </h1>
+              <p className="text-sm text-gray-500">
+                Manage your personal information
+              </p>
+            </div>
+            <div className="hidden sm:flex gap-2">
+              <button
+                onClick={() => setIsPasswordModalOpen(true)}
+                className="rounded-lg px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 transition focus:outline-none focus:ring-2 focus:ring-gray-300"
+              >
+                Change Password
+              </button>
+              <button
+                onClick={() => setIsEditModalOpen(true)}
+                className="rounded-lg px-3 py-2 text-sm font-semibold text-white transition focus:outline-none focus:ring-2 focus:ring-orange-300"
+                style={{ background: brand.orange }}
+              >
+                Edit Profile
+              </button>
+            </div>
           </div>
-        </form>
+
+          {/* Divider */}
+          <div className="h-px bg-gray-200" />
+
+          {/* Body */}
+          <div className="p-6 space-y-6">
+            {/* Meta (minimal) */}
+            <div className="text-sm text-gray-600">
+              <span className="mr-4">
+                <span className="text-gray-700 font-medium">Full name:</span>{" "}
+                {fullName}
+              </span>
+              <span>
+                <span className="text-gray-700 font-medium">Joined:</span>{" "}
+                {niceDate(userProfile?.joined_at)}
+              </span>
+            </div>
+
+            {/* Fields */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {[
+                "firstName",
+                "middleName",
+                "lastName",
+                "email",
+                "phoneNumber",
+              ].map((field) => (
+                <label
+                  key={field}
+                  className={field === "phoneNumber" ? "sm:col-span-2" : ""}
+                >
+                  <span className="block text-xs font-medium text-gray-600 mb-1">
+                    {labelize(field)}
+                  </span>
+                  <input
+                    type="text"
+                    value={(editForm as any)[field] ?? ""}
+                    readOnly
+                    className="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5 text-gray-900 outline-none focus:ring-2 focus:ring-orange-300"
+                  />
+                </label>
+              ))}
+            </div>
+
+            {/* Mobile buttons */}
+            <div className="sm:hidden flex gap-2 pt-2">
+              <button
+                onClick={() => setIsPasswordModalOpen(true)}
+                className="flex-1 rounded-lg px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 transition focus:outline-none focus:ring-2 focus:ring-gray-300"
+              >
+                Change Password
+              </button>
+              <button
+                onClick={() => setIsEditModalOpen(true)}
+                className="flex-1 rounded-lg px-3 py-2 text-sm font-semibold text-white transition focus:outline-none focus:ring-2 focus:ring-orange-300"
+                style={{ background: brand.orange }}
+              >
+                Edit Profile
+              </button>
+            </div>
+          </div>
+        </section>
       </div>
 
-      {/* Edit Modal */}
+      {/* ===== Edit Modal (minimal) ===== */}
       {isEditModalOpen && (
-        <div style={modalOverlay}>
-          <div style={modalContent}>
-            <h2>Edit Profile</h2>
-            <form style={{ display: "grid", gap: "1rem" }}>
-              {["firstName", "middleName", "lastName", "phoneNumber"].map(
-                (field) => (
-                  <div key={field}>
-                    <label>
-                      {
-                        field
-                          .replace(/([A-Z])/g, " $1") // insert space before capital letters
-                          .replace(/^./, (str) => str.toUpperCase()) // capitalize first letter of the string
-                          .replace(/\b\w/g, (str) => str.toUpperCase()) // capitalize first letter of each word
-                      }
+        <div className="fixed inset-0 z-50">
+          <div className="absolute inset-0 bg-black/30" aria-hidden />
+          <div className="absolute inset-0 flex items-center justify-center p-4">
+            <div className="w-full max-w-md rounded-xl bg-white shadow-md ring-1 ring-gray-200 p-6">
+              <h2 className="text-base font-semibold text-gray-900 mb-4">
+                Edit Profile
+              </h2>
+              <div className="grid gap-4">
+                {["firstName", "middleName", "lastName", "phoneNumber"].map(
+                  (field) => (
+                    <label key={field}>
+                      <span className="block text-xs font-medium text-gray-600 mb-1">
+                        {labelize(field)}
+                      </span>
+                      <input
+                        name={field}
+                        value={(editForm as any)[field] ?? ""}
+                        onChange={handleEditChange}
+                        className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-gray-900 outline-none focus:ring-2 focus:ring-orange-300"
+                      />
                     </label>
-                    <input
-                      name={field}
-                      value={(editForm as any)[field]}
-                      onChange={handleEditChange}
-                      style={inputStyle}
-                    />
-                  </div>
-                )
-              )}
-              <div>
-                <label>Email (read-only)</label>
-                <input
-                  type="text"
-                  value={editForm.email}
-                  readOnly
-                  style={{ ...inputStyle, background: "#eaeaea" }}
-                />
+                  )
+                )}
+                <label>
+                  <span className="block text-xs font-medium text-gray-600 mb-1">
+                    Email (read-only)
+                  </span>
+                  <input
+                    value={editForm.email ?? ""}
+                    readOnly
+                    className="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5 text-gray-700"
+                  />
+                </label>
               </div>
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "flex-end",
-                  gap: "1rem",
-                }}
-              >
+
+              <div className="flex justify-end gap-2 mt-6">
                 <button
-                  type="button"
-                  onClick={handleSaveEdit}
-                  style={greenButton}
-                >
-                  Save
-                </button>
-                <button
-                  type="button"
                   onClick={() => setIsEditModalOpen(false)}
-                  style={cancelButton}
+                  className="rounded-lg px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 transition focus:outline-none focus:ring-2 focus:ring-gray-300"
                 >
                   Cancel
                 </button>
+                <button
+                  onClick={handleSaveEdit}
+                  disabled={savingEdit}
+                  className="rounded-lg px-3 py-2 text-sm font-semibold text-white transition focus:outline-none focus:ring-2 focus:ring-orange-300 disabled:opacity-70"
+                  style={{ background: brand.orange }}
+                >
+                  {savingEdit ? (
+                    <span className="inline-flex items-center gap-2">
+                      <Loader2 className="h-4 w-4 animate-spin" /> Saving…
+                    </span>
+                  ) : (
+                    "Save"
+                  )}
+                </button>
               </div>
-            </form>
+            </div>
           </div>
         </div>
       )}
 
-      {/* Password Modal */}
+      {/* ===== Password Modal (minimal) ===== */}
       {isPasswordModalOpen && (
-        <div style={modalOverlay}>
-          <div style={modalContent}>
-            <h2>Change Password</h2>
-            <form style={{ display: "grid", gap: "1rem" }}>
-              {[
-                {
-                  label: "Current Password",
-                  value: passwordForm.currentPassword,
-                  show: showCurrentPassword,
-                  toggle: () => setShowCurrentPassword((prev) => !prev),
-                  onChange: (e: React.ChangeEvent<HTMLInputElement>) =>
-                    setPasswordForm((prev) => ({
-                      ...prev,
-                      currentPassword: e.target.value,
-                    })),
-                },
-                {
-                  label: "New Password",
-                  value: passwordForm.newPassword,
-                  show: showNewPassword,
-                  toggle: () => setShowNewPassword((prev) => !prev),
-                  onChange: (e: React.ChangeEvent<HTMLInputElement>) =>
-                    setPasswordForm((prev) => ({
-                      ...prev,
-                      newPassword: e.target.value,
-                    })),
-                },
-                {
-                  label: "Confirm Password",
-                  value: passwordForm.confirmPassword,
-                  show: showConfirmPassword,
-                  toggle: () => setShowConfirmPassword((prev) => !prev),
-                  onChange: (e: React.ChangeEvent<HTMLInputElement>) =>
-                    setPasswordForm((prev) => ({
-                      ...prev,
-                      confirmPassword: e.target.value,
-                    })),
-                },
-              ].map(({ label, value, show, toggle, onChange }) => (
-                <div key={label}>
-                  <label className="block text-xs font-medium mb-1">
-                    {label}
-                  </label>
-                  <div className="relative">
-                    <input
-                      type={show ? "text" : "password"}
-                      value={value}
-                      onChange={onChange}
-                      className="w-full border border-gray-300 rounded px-2 py-1 text-xs pr-10 appearance-none"
-                    />
-                    <div
-                      className="absolute right-2 top-1/2 transform -translate-y-1/2 text-gray-600 cursor-pointer"
-                      onClick={toggle}
-                    >
-                      {show ? <FaEyeSlash /> : <FaEye />}
+        <div className="fixed inset-0 z-50">
+          <div className="absolute inset-0 bg-black/30" aria-hidden />
+          <div className="absolute inset-0 flex items-center justify-center p-4">
+            <div className="w-full max-w-md rounded-xl bg-white shadow-md ring-1 ring-gray-200 p-6">
+              <h2 className="text-base font-semibold text-gray-900 mb-4">
+                Change Password
+              </h2>
+
+              <div className="grid gap-4">
+                {[
+                  {
+                    label: "Current Password",
+                    value: passwordForm.currentPassword,
+                    show: showCurrentPassword,
+                    toggle: () => setShowCurrentPassword((p) => !p),
+                    key: "currentPassword",
+                  },
+                  {
+                    label: "New Password",
+                    value: passwordForm.newPassword,
+                    show: showNewPassword,
+                    toggle: () => setShowNewPassword((p) => !p),
+                    key: "newPassword",
+                  },
+                  {
+                    label: "Confirm Password",
+                    value: passwordForm.confirmPassword,
+                    show: showConfirmPassword,
+                    toggle: () => setShowConfirmPassword((p) => !p),
+                    key: "confirmPassword",
+                  },
+                ].map(({ label, value, show, toggle, key }) => (
+                  <div key={key}>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">
+                      {label}
+                    </label>
+                    <div className="relative">
+                      <input
+                        type={show ? "text" : "password"}
+                        value={value}
+                        onChange={(e) =>
+                          setPasswordForm((prev) => ({
+                            ...prev,
+                            [key]: e.target.value,
+                          }))
+                        }
+                        className="w-full rounded-lg border border-gray-200 px-3 py-2.5 pr-10 outline-none focus:ring-2 focus:ring-orange-300"
+                      />
+                      <button
+                        type="button"
+                        onClick={toggle}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-700 transition"
+                        aria-label={show ? "Hide password" : "Show password"}
+                      >
+                        {show ? <FaEyeSlash /> : <FaEye />}
+                      </button>
                     </div>
+                    {key === "newPassword" && (
+                      <PasswordStrength value={value} />
+                    )}
                   </div>
-                </div>
-              ))}
+                ))}
 
-              {passwordError && (
-                <p className="text-red-500 text-xs mt-1">{passwordError}</p>
-              )}
+                {passwordError && (
+                  <p className="text-red-500 text-sm">{passwordError}</p>
+                )}
+              </div>
 
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "flex-end",
-                  gap: "1rem",
-                }}
-              >
+              <div className="flex justify-end gap-2 mt-6">
                 <button
-                  type="button"
-                  onClick={handlePasswordChange}
-                  style={greenButton}
-                >
-                  Update
-                </button>
-                <button
-                  type="button"
                   onClick={() => setIsPasswordModalOpen(false)}
-                  style={cancelButton}
+                  className="rounded-lg px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 transition focus:outline-none focus:ring-2 focus:ring-gray-300"
                 >
                   Cancel
                 </button>
+                <button
+                  onClick={handlePasswordChange}
+                  disabled={changingPw}
+                  className="rounded-lg px-3 py-2 text-sm font-semibold text-white transition focus:outline-none focus:ring-2 focus:ring-orange-300 disabled:opacity-70"
+                  style={{ background: brand.orange }}
+                >
+                  {changingPw ? (
+                    <span className="inline-flex items-center gap-2">
+                      <Loader2 className="h-4 w-4 animate-spin" /> Updating…
+                    </span>
+                  ) : (
+                    "Update"
+                  )}
+                </button>
               </div>
-            </form>
+            </div>
           </div>
         </div>
       )}
@@ -317,69 +413,27 @@ const CustomerProfile = () => {
   );
 };
 
-// === Styles ===
-const inputStyle: React.CSSProperties = {
-  width: "100%",
-  padding: "0.5rem",
-  border: "1px solid #ccc",
-  borderRadius: "4px",
-};
+/* -------------------- subcomponents -------------------- */
+function PasswordStrength({ value }: { value: string }) {
+  const s = scorePassword(value);
+  const segments = 5;
 
-const modalOverlay: React.CSSProperties = {
-  position: "fixed",
-  top: 0,
-  left: 0,
-  height: "100vh",
-  width: "100vw",
-  background: "rgba(0,0,0,0.4)",
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  zIndex: 9999,
-};
+  // minimalist meter (monochrome with slight success accent at max)
+  const segmentClass = (i: number) =>
+    i < s ? (s < 5 ? "bg-gray-400" : "bg-green-500") : "bg-gray-200";
 
-const modalContent: React.CSSProperties = {
-  background: "#fff",
-  padding: "2rem",
-  borderRadius: "8px",
-  width: "90%",
-  maxWidth: "400px",
-};
-
-const goldButton: React.CSSProperties = {
-  padding: "0.5rem 1rem",
-  background: "#FFB030",
-  border: "none",
-  color: "#fff",
-  borderRadius: "4px",
-  cursor: "pointer",
-};
-
-const darkButton: React.CSSProperties = {
-  padding: "0.5rem 1rem",
-  background: "#333",
-  border: "none",
-  color: "#fff",
-  borderRadius: "4px",
-  cursor: "pointer",
-};
-
-const greenButton: React.CSSProperties = {
-  padding: "0.5rem 1rem",
-  background: "#28a745",
-  border: "none",
-  color: "#fff",
-  borderRadius: "4px",
-  cursor: "pointer",
-};
-
-const cancelButton: React.CSSProperties = {
-  padding: "0.5rem 1rem",
-  background: "#ccc",
-  color: "#333",
-  border: "none",
-  borderRadius: "4px",
-  cursor: "pointer",
-};
+  return (
+    <div className="mt-2">
+      <div className="flex gap-1">
+        {Array.from({ length: segments }).map((_, i) => (
+          <div key={i} className={`h-1.5 flex-1 rounded ${segmentClass(i)}`} />
+        ))}
+      </div>
+      <p className="text-[11px] mt-1 text-gray-500">
+        Use 8+ chars with upper/lowercase, numbers, and a symbol.
+      </p>
+    </div>
+  );
+}
 
 export default CustomerProfile;

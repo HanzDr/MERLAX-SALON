@@ -9,7 +9,7 @@ export type ProductRow = {
   description: string;
   packaging: string;
   quantity: number;
-  price: number;
+  price: number; // unit price
   lastUpdated: string;
   image?: string | null;
   lowStockLevel?: number | null;
@@ -52,7 +52,6 @@ type Props = {
 const formatDateFriendly = (input: string) => {
   const d = new Date(input);
   if (Number.isNaN(d.getTime())) return input;
-  // e.g., "Oct 15 2025"
   return d
     .toLocaleDateString(undefined, {
       month: "short",
@@ -67,7 +66,7 @@ type EditState = {
   id: string;
   name: string;
   description: string;
-  price: string;
+  price: string; // unit price (editable)
   lowStockLevel: string;
 };
 
@@ -129,9 +128,7 @@ const ProductTable: React.FC<Props> = ({
     });
   };
 
-  const closeEdit = () => {
-    setEdit((e) => ({ ...e, open: false }));
-  };
+  const closeEdit = () => setEdit((e) => ({ ...e, open: false }));
 
   const validateEdit = (): boolean => {
     const errs: typeof editErrors = {};
@@ -141,8 +138,11 @@ const ProductTable: React.FC<Props> = ({
     }
     if (edit.lowStockLevel !== "") {
       const lvl = Number(edit.lowStockLevel);
-      if (!Number.isFinite(lvl) || lvl < 0) {
+      if (!Number.isNaN(lvl) && lvl < 0) {
         errs.lowStockLevel = "Low stock level must be a non-negative number.";
+      }
+      if (Number.isNaN(lvl)) {
+        errs.lowStockLevel = "Low stock level must be a number.";
       }
     }
     setEditErrors(errs);
@@ -177,17 +177,23 @@ const ProductTable: React.FC<Props> = ({
     }
   };
 
+  const fmtMoney = (n: number) =>
+    n.toLocaleString(undefined, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+
   return (
-    <div className="w-full rounded-2xl bg-white p-4 shadow-sm">
+    <div className="w-full rounded-2xl border border-zinc-200 bg-white shadow-sm">
       {/* Header controls */}
-      <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+      <div className="flex flex-col gap-3 border-b border-zinc-100 p-4 md:flex-row md:items-center md:justify-between">
         {/* Left: page size */}
-        <div className="flex items-center gap-2 text-sm">
-          <span>Show</span>
+        <div className="inline-flex items-center gap-2 rounded-xl bg-zinc-50 px-2 py-1 ring-1 ring-inset ring-zinc-200">
+          <span className="px-2 text-sm text-zinc-600">Rows</span>
           <select
             value={pageSize}
             onChange={(e) => onPageSizeChange(Number(e.target.value))}
-            className="rounded-lg border px-2 py-1"
+            className="rounded-lg bg-white px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-amber-200"
           >
             {pageSizeOptions.map((n) => (
               <option key={n} value={n}>
@@ -195,7 +201,6 @@ const ProductTable: React.FC<Props> = ({
               </option>
             ))}
           </select>
-          <span>entries</span>
         </div>
 
         {/* Right: search + filters */}
@@ -205,15 +210,16 @@ const ProductTable: React.FC<Props> = ({
             <input
               value={search}
               onChange={(e) => onSearchChange(e.target.value)}
-              placeholder="Search..."
-              className="w-full rounded-lg border pl-8 pr-3 py-2 text-sm"
+              placeholder="Search products…"
+              className="w-full rounded-xl border border-zinc-200 bg-white px-10 py-2 text-sm outline-none focus:border-zinc-300 focus:ring-2 focus:ring-amber-200"
             />
             <svg
-              className="absolute left-2 top-2.5 h-4 w-4 text-gray-400"
+              className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500"
               fill="none"
               stroke="currentColor"
               strokeWidth={2}
               viewBox="0 0 24 24"
+              aria-hidden
             >
               <circle cx="11" cy="11" r="8" />
               <path d="m21 21-4.3-4.3" />
@@ -224,7 +230,7 @@ const ProductTable: React.FC<Props> = ({
           <select
             value={categoryFilter}
             onChange={(e) => onCategoryFilterChange(e.target.value)}
-            className="rounded-lg border px-2 py-2 text-sm"
+            className="rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm outline-none focus:border-zinc-300 focus:ring-2 focus:ring-amber-200"
             title="Filter by category"
           >
             <option value="">All Categories</option>
@@ -241,7 +247,7 @@ const ProductTable: React.FC<Props> = ({
             onChange={(e) =>
               onLowStockFilterChange(e.target.value as "all" | "low" | "notlow")
             }
-            className="rounded-lg border px-2 py-2 text-sm"
+            className="rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm outline-none focus:border-zinc-300 focus:ring-2 focus:ring-amber-200"
             title="Filter by low stock"
           >
             <option value="all">All Stock</option>
@@ -253,33 +259,26 @@ const ProductTable: React.FC<Props> = ({
 
       {/* Table */}
       <div className="overflow-x-auto">
-        <table className="w-full border-collapse text-sm">
-          <thead className="bg-gray-100 font-semibold text-gray-700">
-            <tr>
-              <th className="py-2 px-3 text-left">Product</th>
-              <th className="py-2 px-3 text-left">Category</th>
-              <th className="py-2 px-3 text-left">Description</th>
-              <th className="py-2 px-3 text-left">Packaging</th>
-              <th className="py-2 px-3 text-left">Quantity</th>
-              <th className="py-2 px-3 text-left">Price</th>
-              <th className="py-2 px-3 text-left">Last Updated</th>
-              <th className="py-2 px-3 text-center">Action</th>
+        <table className="w-full text-left text-sm">
+          <thead className="sticky top-0 z-10 bg-white/90 backdrop-blur supports-[backdrop-filter]:bg-white/70">
+            <tr className="text-zinc-600">
+              <Th>Product</Th>
+              <Th>Category</Th>
+              <Th>Description</Th>
+              <Th>Packaging</Th>
+              <Th className="text-right">Quantity</Th>
+              <Th className="text-right">Total Price</Th>
+              <Th>Last Updated</Th>
+              <Th className="text-center">Action</Th>
             </tr>
           </thead>
 
-          <tbody>
+          <tbody className="divide-y divide-zinc-100">
             {loading ? (
-              <tr>
-                <td colSpan={8} className="py-6 text-center text-gray-500">
-                  Loading…
-                </td>
-              </tr>
+              <SkeletonRows />
             ) : rows.length === 0 ? (
               <tr>
-                <td
-                  colSpan={8}
-                  className="py-6 text-center italic text-gray-500"
-                >
+                <td colSpan={8} className="py-8 text-center text-zinc-500">
                   No products found.
                 </td>
               </tr>
@@ -291,49 +290,65 @@ const ProductTable: React.FC<Props> = ({
                 const belowLow =
                   hasLow && p.quantity <= (p.lowStockLevel as number);
 
+                const unitPrice = Number(p.price) || 0;
+                const totalPrice = unitPrice * (Number(p.quantity) || 0);
+
                 return (
                   <tr
                     key={p.id}
-                    className={`border-b ${
-                      idx % 2 === 0 ? "bg-[#FFF9F2]" : "bg-[#FFF6EE]"
-                    }`}
+                    className={[
+                      "transition-colors hover:bg-amber-50/40",
+                      idx % 2 === 0 ? "bg-white" : "bg-zinc-50/50",
+                    ].join(" ")}
                   >
-                    <td className="py-2 px-3 font-medium text-gray-800">
+                    <Td className="font-medium text-zinc-900">
                       <div className="flex items-center gap-2">
                         {p.name}
                         {belowLow && (
                           <span
                             title="At or below low stock level"
-                            className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-semibold text-rose-700"
+                            className="inline-flex items-center gap-1 rounded-full bg-rose-50 px-2 py-0.5 text-[11px] font-semibold text-rose-700 ring-1 ring-inset ring-rose-200"
                           >
                             <AlertTriangle className="h-3 w-3" />
                             Low Stock Level
                           </span>
                         )}
                       </div>
-                    </td>
+                    </Td>
 
-                    <td className="py-2 px-3">{p.category}</td>
-                    <td className="py-2 px-3">{p.description}</td>
-                    <td className="py-2 px-3">{p.packaging}</td>
-                    <td className="py-2 px-3">{p.quantity}</td>
+                    <Td className="text-zinc-700">{p.category}</Td>
+                    <Td className="text-zinc-700">
+                      {p.description || (
+                        <span className="text-zinc-400">—</span>
+                      )}
+                    </Td>
+                    <Td className="text-zinc-700">{p.packaging || "—"}</Td>
 
-                    <td className="py-2 px-3 font-semibold text-gray-800">
-                      {currencyPrefix}
-                      {Number(p.price).toLocaleString(undefined, {
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2,
-                      })}
-                    </td>
+                    <Td className="text-right tabular-nums text-zinc-900">
+                      {p.quantity}
+                    </Td>
 
-                    <td className="py-2 px-3">
+                    <Td className="text-right tabular-nums text-zinc-900">
+                      <div className="inline-flex flex-col items-end">
+                        <div>
+                          {currencyPrefix}
+                          {fmtMoney(totalPrice)}
+                        </div>
+                        <div className="text-[11px] text-zinc-500">
+                          ({currencyPrefix}
+                          {fmtMoney(unitPrice)} each)
+                        </div>
+                      </div>
+                    </Td>
+
+                    <Td className="text-zinc-700" title={p.lastUpdated}>
                       {formatDateFriendly(p.lastUpdated)}
-                    </td>
+                    </Td>
 
-                    <td className="py-2 px-3 text-center">
-                      <div className="flex items-center justify-center gap-3">
+                    <Td className="text-center">
+                      <div className="inline-flex items-center justify-center gap-2">
                         <button
-                          className="rounded-md border px-3 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-50"
+                          className="rounded-lg border border-zinc-200 px-2.5 py-1.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 active:scale-[0.99]"
                           onClick={() => startEdit(p)}
                           aria-label={`Edit ${p.name}`}
                           title="Edit product"
@@ -342,15 +357,17 @@ const ProductTable: React.FC<Props> = ({
                         </button>
 
                         <button
-                          className="text-red-600 hover:text-red-700"
+                          className="rounded-lg border border-rose-200 px-2.5 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-50 active:scale-[0.99]"
                           onClick={() => onDelete?.(p.id)}
                           aria-label={`Delete ${p.name}`}
                           title="Delete product"
                         >
-                          <Trash2 className="h-5 w-5" />
+                          <span className="inline-flex items-center gap-1.5">
+                            <Trash2 className="h-4 w-4" />
+                          </span>
                         </button>
                       </div>
-                    </td>
+                    </Td>
                   </tr>
                 );
               })
@@ -360,62 +377,86 @@ const ProductTable: React.FC<Props> = ({
       </div>
 
       {/* Footer / Pagination */}
-      <div className="mt-4 flex items-center justify-between text-sm">
-        <span>
-          Showing <b>{rows.length}</b> of <b>{total}</b> entries
-        </span>
-        <div className="flex items-center gap-2">
-          <button
-            className="rounded-lg border px-3 py-1 disabled:opacity-50"
-            disabled={page <= 1}
-            onClick={() => onPageChange(page - 1)}
-          >
-            Previous
-          </button>
-          <span>
-            Page <b>{page}</b> / {totalPages}
-          </span>
-          <button
-            className="rounded-lg border px-3 py-1 disabled:opacity-50"
-            disabled={page >= totalPages}
-            onClick={() => onPageChange(page + 1)}
-          >
-            Next
-          </button>
+      <div className="flex flex-col items-center gap-3 border-t border-zinc-100 p-4 sm:flex-row sm:justify-between">
+        <div className="text-sm text-zinc-600">
+          Showing <b className="text-zinc-900">{rows.length}</b> of{" "}
+          <b className="text-zinc-900">{total}</b> entries
         </div>
+
+        <nav className="inline-flex items-center gap-1" aria-label="Pagination">
+          <PagerButton
+            onClick={() => onPageChange(1)}
+            disabled={page <= 1}
+            ariaLabel="First"
+          >
+            «
+          </PagerButton>
+          <PagerButton
+            onClick={() => onPageChange(page - 1)}
+            disabled={page <= 1}
+            ariaLabel="Previous"
+          >
+            ‹
+          </PagerButton>
+          <span className="mx-2 select-none text-sm text-zinc-600">
+            Page <b className="text-zinc-900">{page}</b> of{" "}
+            <b className="text-zinc-900">{totalPages}</b>
+          </span>
+          <PagerButton
+            onClick={() => onPageChange(page + 1)}
+            disabled={page >= totalPages}
+            ariaLabel="Next"
+          >
+            ›
+          </PagerButton>
+          <PagerButton
+            onClick={() => onPageChange(totalPages)}
+            disabled={page >= totalPages}
+            ariaLabel="Last"
+          >
+            »
+          </PagerButton>
+        </nav>
       </div>
 
       {/* Edit Modal */}
       {edit.open && (
         <div
-          className="fixed inset-0 z-[120] flex items-center justify-center"
+          className="fixed inset-0 z-[120] grid place-items-center"
           role="dialog"
           aria-modal="true"
           aria-labelledby="edit-product-title"
         >
-          <div className="absolute inset-0 bg-black/40" onClick={closeEdit} />
-          <div className="relative z-[121] w-[92%] max-w-lg rounded-2xl bg-white p-6 shadow-2xl">
-            <div className="mb-4 flex items-center justify-between">
-              <h3 id="edit-product-title" className="text-xl font-semibold">
-                Edit “{edit.name}”
-              </h3>
-              <button
-                type="button"
-                onClick={closeEdit}
-                className="rounded-full p-1 hover:bg-gray-100"
-                aria-label="Close"
-              >
-                <X className="h-5 w-5 text-gray-500" />
-              </button>
+          <div
+            className="absolute inset-0 bg-zinc-900/50 backdrop-blur-sm"
+            onClick={closeEdit}
+          />
+          <div className="relative z-[121] w-[92%] max-w-lg overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-xl">
+            {/* Header */}
+            <div className="sticky top-0 border-b bg-white/80 p-5 backdrop-blur supports-[backdrop-filter]:bg-white/60">
+              <div className="flex items-center justify-between">
+                <h3 id="edit-product-title" className="text-xl font-semibold">
+                  Edit “{edit.name}”
+                </h3>
+                <button
+                  type="button"
+                  onClick={closeEdit}
+                  className="rounded-full p-1 text-zinc-500 hover:bg-zinc-100"
+                  aria-label="Close"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
             </div>
 
-            <div className="space-y-4">
+            {/* Body */}
+            <div className="p-5 space-y-4">
               <div>
-                <label className="mb-1 block text-sm text-gray-700">
+                <label className="mb-1 block text-sm text-zinc-700">
                   Description
                 </label>
                 <input
-                  className="w-full rounded-xl border px-3 py-2 outline-none focus:ring-2 focus:ring-black/10"
+                  className="w-full rounded-xl border border-zinc-200 px-3 py-2 outline-none focus:border-zinc-300 focus:ring-2 focus:ring-amber-200"
                   value={edit.description}
                   onChange={(e) =>
                     setEdit((s) => ({ ...s, description: e.target.value }))
@@ -430,15 +471,15 @@ const ProductTable: React.FC<Props> = ({
               </div>
 
               <div>
-                <label className="mb-1 block text-sm text-gray-700">
-                  Price
+                <label className="mb-1 block text-sm text-zinc-700">
+                  Unit Price
                 </label>
                 <div className="relative">
-                  <span className="pointer-events-none absolute left-3 top-2.5 text-gray-500">
+                  <span className="pointer-events-none absolute left-3 top-2.5 text-zinc-500">
                     {currencyPrefix}
                   </span>
                   <input
-                    className="w-full rounded-xl border px-7 py-2 outline-none focus:ring-2 focus:ring-black/10"
+                    className="w-full rounded-xl border border-zinc-200 px-7 py-2 outline-none focus:border-zinc-300 focus:ring-2 focus:ring-amber-200"
                     inputMode="decimal"
                     value={edit.price}
                     onChange={(e) =>
@@ -455,11 +496,11 @@ const ProductTable: React.FC<Props> = ({
               </div>
 
               <div>
-                <label className="mb-1 block text-sm text-gray-700">
+                <label className="mb-1 block text-sm text-zinc-700">
                   Low Stock Level
                 </label>
                 <input
-                  className="w-full rounded-xl border px-3 py-2 outline-none focus:ring-2 focus:ring-black/10"
+                  className="w-full rounded-xl border border-zinc-200 px-3 py-2 outline-none focus:border-zinc-300 focus:ring-2 focus:ring-amber-200"
                   inputMode="numeric"
                   value={edit.lowStockLevel}
                   onChange={(e) =>
@@ -475,10 +516,11 @@ const ProductTable: React.FC<Props> = ({
               </div>
             </div>
 
-            <div className="mt-5 flex justify-end gap-3">
+            {/* Footer */}
+            <div className="flex items-center justify-end gap-3 border-t bg-white/60 p-5">
               <button
                 type="button"
-                className="rounded-xl bg-black px-5 py-2 text-sm font-semibold text-white hover:opacity-90"
+                className="rounded-xl bg-zinc-100 px-5 py-2 text-sm font-semibold text-zinc-800 ring-1 ring-inset ring-zinc-200 hover:bg-zinc-200"
                 onClick={closeEdit}
                 disabled={savingEdit}
               >
@@ -486,7 +528,7 @@ const ProductTable: React.FC<Props> = ({
               </button>
               <button
                 type="button"
-                className="rounded-xl bg-amber-400 px-5 py-2 text-sm font-semibold text-white hover:bg-amber-500 disabled:opacity-60"
+                className="rounded-xl bg-amber-400 px-5 py-2 text-sm font-semibold text-black shadow-sm hover:bg-amber-500 disabled:opacity-60"
                 onClick={saveEdit}
                 disabled={savingEdit}
               >
@@ -501,3 +543,83 @@ const ProductTable: React.FC<Props> = ({
 };
 
 export default ProductTable;
+
+/* ---------- Small UI bits ---------- */
+
+function Th({
+  children,
+  className = "",
+  ...rest
+}: React.PropsWithChildren<React.ThHTMLAttributes<HTMLTableCellElement>>) {
+  return (
+    <th
+      className={[
+        "px-4 py-3 text-xs font-semibold uppercase tracking-wide",
+        "text-zinc-500",
+        className,
+      ].join(" ")}
+      scope="col"
+      {...rest}
+    >
+      {children}
+    </th>
+  );
+}
+
+function Td({
+  children,
+  className = "",
+  ...rest
+}: React.PropsWithChildren<React.TdHTMLAttributes<HTMLTableCellElement>>) {
+  return (
+    <td className={["px-4 py-3 align-middle", className].join(" ")} {...rest}>
+      {children}
+    </td>
+  );
+}
+
+function PagerButton({
+  children,
+  onClick,
+  disabled,
+  ariaLabel,
+}: React.PropsWithChildren<{
+  onClick: () => void;
+  disabled?: boolean;
+  ariaLabel: string;
+}>) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      aria-label={ariaLabel}
+      className={[
+        "h-9 w-9 rounded-lg border border-zinc-200 text-sm",
+        "grid place-items-center",
+        disabled
+          ? "cursor-not-allowed bg-zinc-50 text-zinc-300"
+          : "bg-white text-zinc-700 hover:bg-zinc-50 active:scale-[0.99]",
+      ].join(" ")}
+    >
+      {children}
+    </button>
+  );
+}
+
+function SkeletonRows() {
+  const cols = 8;
+  const rows = 6;
+  return (
+    <>
+      {Array.from({ length: rows }).map((_, r) => (
+        <tr key={r} className={r % 2 ? "bg-zinc-50/50" : "bg-white"}>
+          {Array.from({ length: cols }).map((__, c) => (
+            <td key={c} className="px-4 py-3">
+              <div className="h-4 w-full max-w-[180px] animate-pulse rounded bg-zinc-200" />
+            </td>
+          ))}
+        </tr>
+      ))}
+    </>
+  );
+}

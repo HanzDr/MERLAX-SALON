@@ -9,7 +9,6 @@ import {
 } from "@/validation/PromoManagementSchema";
 import { useServicesAndStylistContext } from "@/features/servicesAndStylist/contexts/ServicesAndStylistContext";
 import { usePromoManagementContext } from "@/features/promo-management/context/promoManagementContext";
-// 👇 import your Discount page (adjust path if needed)
 import AdminDiscount from "./AdminDiscount";
 
 /* -------------------------- Types & helpers -------------------------- */
@@ -37,12 +36,12 @@ const peso = (n: number) =>
 
 const StatusPill = ({ value }: { value: Row["status"] }) => (
   <span
-    className={
-      "rounded-full px-3 py-1 text-sm " +
-      (value === "Active"
-        ? "bg-green-100 text-green-700"
-        : "bg-red-100 text-red-600")
-    }
+    className={[
+      "rounded-full px-3 py-1 text-xs font-semibold ring-1 ring-inset",
+      value === "Active"
+        ? "bg-emerald-50 text-emerald-700 ring-emerald-200"
+        : "bg-rose-50 text-rose-700 ring-rose-200",
+    ].join(" ")}
   >
     {value}
   </span>
@@ -105,23 +104,23 @@ function ConfirmModal({
   if (!open) return null;
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      className="fixed inset-0 z-[999] grid place-items-center p-4"
       aria-modal
       role="dialog"
     >
       <div
         ref={overlayRef}
-        className="absolute inset-0 bg-black/40"
+        className="absolute inset-0 bg-zinc-900/50 backdrop-blur-sm"
         onClick={(e) => {
           if (e.target === overlayRef.current) onCancel();
         }}
       />
-      <div className="relative w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
-        <h3 className="mb-2 text-xl font-semibold">{title}</h3>
-        <p className="mb-6 text-sm text-gray-600">{message}</p>
+      <div className="relative w-full max-w-md overflow-hidden rounded-2xl border border-white/20 bg-white/90 p-6 shadow-2xl backdrop-blur-xl">
+        <h3 className="mb-2 text-xl font-bold text-zinc-900">{title}</h3>
+        <p className="mb-6 text-sm text-zinc-600">{message}</p>
         <div className="flex justify-end gap-3">
           <button
-            className="rounded-lg bg-gray-100 px-4 py-2 text-sm font-medium hover:bg-gray-200"
+            className="rounded-xl border border-zinc-300 bg-white px-4 py-2 text-sm font-semibold text-zinc-800 hover:bg-zinc-50"
             onClick={onCancel}
             disabled={loading}
           >
@@ -130,12 +129,12 @@ function ConfirmModal({
           <button
             onClick={onConfirm}
             disabled={loading}
-            className={
-              "rounded-lg px-4 py-2 text-sm font-medium text-white shadow " +
-              (confirmVariant === "danger"
-                ? "bg-red-600 hover:bg-red-700 disabled:opacity-60"
-                : "bg-amber-500 hover:bg-amber-600 disabled:opacity-60")
-            }
+            className={[
+              "rounded-xl px-4 py-2 text-sm font-semibold text-white shadow-sm disabled:opacity-60",
+              confirmVariant === "danger"
+                ? "bg-rose-600 hover:bg-rose-700"
+                : "bg-amber-500 hover:bg-amber-600",
+            ].join(" ")}
           >
             {loading ? "Processing…" : confirmText}
           </button>
@@ -246,140 +245,155 @@ function PackageModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center p-4 md:items-center"
+      className="fixed inset-0 z-[998] grid place-items-center p-4"
       aria-modal
       role="dialog"
     >
       <div
         ref={overlayRef}
-        className="absolute inset-0 bg-black/40"
+        className="absolute inset-0 bg-zinc-900/50 backdrop-blur-sm"
         onClick={(e) => {
           if (e.target === overlayRef.current) onClose();
         }}
       />
-      <div className="relative w-full max-w-4xl rounded-2xl bg-white p-6 shadow-xl">
-        <button
-          onClick={onClose}
-          className="absolute right-3 top-3 rounded-full p-1 hover:bg-gray-100"
-          aria-label="Close"
-        >
-          <X className="h-5 w-5" />
-        </button>
+      <div className="relative w-full max-w-4xl overflow-hidden rounded-2xl border border-white/20 bg-white/90 shadow-2xl backdrop-blur-xl">
+        {/* Header */}
+        <div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-zinc-200/60 bg-white/70 px-6 py-4 backdrop-blur-xl">
+          <div>
+            <h2 className="text-xl sm:text-2xl font-bold text-zinc-900">
+              {mode === "edit" ? "Edit Package" : "Add Package"}
+            </h2>
+            <p className="text-xs text-zinc-500">
+              {mode === "edit" ? "Update package details" : "Create a package"}
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="rounded-xl p-2 text-zinc-500 hover:bg-zinc-100"
+            aria-label="Close"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
 
-        <h2 className="mb-1 text-2xl font-semibold">
-          {mode === "edit" ? "Edit Package" : "Add a Package"}
-        </h2>
-        <p className="mb-6 text-sm text-gray-500">
-          {mode === "edit" ? "Update Package" : "Create a Package"}
-        </p>
-
+        {/* Body */}
         <form
           onSubmit={handleSubmit(submit)}
-          className="grid grid-cols-1 gap-6 md:grid-cols-2"
+          className="grid gap-6 p-6 md:grid-cols-2"
         >
           {/* Left column */}
           <div className="space-y-4">
             <div>
-              <label className="mb-1 block text-sm font-medium">Name:</label>
+              <label className="mb-1 block text-sm font-semibold text-zinc-800">
+                Name
+              </label>
               <input
                 type="text"
                 {...register("name")}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:ring-2 focus:ring-amber-400"
+                className="w-full rounded-xl border border-zinc-200 bg-white/80 px-3 py-2 text-sm shadow-sm outline-none focus:ring-2 focus:ring-amber-300"
                 placeholder="Package name"
               />
               {errors.name && (
-                <p className="mt-1 text-sm text-red-600">
+                <p className="mt-1 text-xs text-rose-600">
                   {errors.name.message}
                 </p>
               )}
             </div>
 
             <div>
-              <label className="mb-1 block text-sm font-medium">Status:</label>
+              <label className="mb-1 block text-sm font-semibold text-zinc-800">
+                Status
+              </label>
               <select
                 {...register("status")}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:ring-2 focus:ring-amber-400"
+                className="w-full rounded-xl border border-zinc-200 bg-white/80 px-3 py-2 text-sm shadow-sm outline-none focus:ring-2 focus:ring-amber-300"
                 defaultValue="Active"
               >
                 <option value="Active">Active</option>
                 <option value="Inactive">Inactive</option>
               </select>
               {errors.status && (
-                <p className="mt-1 text-sm text-red-600">
+                <p className="mt-1 text-xs text-rose-600">
                   {errors.status.message as string}
                 </p>
               )}
             </div>
 
-            <div>
-              <label className="mb-1 block text-sm font-medium">
-                Start Date:
-              </label>
-              <input
-                type="date"
-                {...register("start_date")}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:ring-2 focus:ring-amber-400"
-              />
-              {errors.start_date && (
-                <p className="mt-1 text-sm text-red-600">
-                  {errors.start_date.message as string}
-                </p>
-              )}
-            </div>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div>
+                <label className="mb-1 block text-sm font-semibold text-zinc-800">
+                  Start Date
+                </label>
+                <input
+                  type="date"
+                  {...register("start_date")}
+                  className="w-full rounded-xl border border-zinc-200 bg-white/80 px-3 py-2 text-sm shadow-sm outline-none focus:ring-2 focus:ring-amber-300"
+                />
+                {errors.start_date && (
+                  <p className="mt-1 text-xs text-rose-600">
+                    {errors.start_date.message as string}
+                  </p>
+                )}
+              </div>
 
-            <div>
-              <label className="mb-1 block text-sm font-medium">
-                End Date:
-              </label>
-              <input
-                type="date"
-                {...register("end_date")}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:ring-2 focus:ring-amber-400"
-              />
-              {errors.end_date && (
-                <p className="mt-1 text-sm text-red-600">
-                  {errors.end_date.message as string}
-                </p>
-              )}
+              <div>
+                <label className="mb-1 block text-sm font-semibold text-zinc-800">
+                  End Date
+                </label>
+                <input
+                  type="date"
+                  {...register("end_date")}
+                  className="w-full rounded-xl border border-zinc-200 bg-white/80 px-3 py-2 text-sm shadow-sm outline-none focus:ring-2 focus:ring-amber-300"
+                />
+                {errors.end_date && (
+                  <p className="mt-1 text-xs text-rose-600">
+                    {errors.end_date.message as string}
+                  </p>
+                )}
+              </div>
             </div>
           </div>
 
           {/* Right column */}
           <div className="space-y-4">
             <div>
-              <label className="mb-1 block text-sm font-medium">
-                Included Services:
+              <label className="mb-1 block text-sm font-semibold text-zinc-800">
+                Included Services
               </label>
-              <p className="mb-2 text-xs text-gray-500">
-                Selected: {selectedIds.length}
+              <p className="mb-2 text-xs text-zinc-500">
+                Selected: {((includedField.value as string[]) ?? []).length}
               </p>
 
-              <div className="h-40 w-full overflow-auto rounded-lg border border-gray-300 p-2">
+              <div className="h-44 w-full overflow-auto rounded-xl border border-zinc-200 bg-white/70 p-2">
                 {services.length === 0 && (
-                  <p className="px-1 text-sm text-gray-500">
+                  <p className="px-1 text-sm text-zinc-500">
                     No services available.
                   </p>
                 )}
                 <ul className="space-y-2">
                   {services.map((s) => {
-                    const checked = selectedIds.includes(s.id);
+                    const checked = (includedField.value as string[])?.includes(
+                      s.id
+                    );
                     return (
                       <li key={s.id}>
-                        <label className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 hover:bg-gray-50">
+                        <label className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1 hover:bg-zinc-50">
                           <input
                             type="checkbox"
                             className="h-4 w-4"
                             checked={checked}
                             onChange={(e) => {
-                              const current = new Set(selectedIds);
+                              const current = new Set(
+                                (includedField.value as string[]) ?? []
+                              );
                               if (e.target.checked) current.add(s.id);
                               else current.delete(s.id);
                               includedField.onChange(Array.from(current));
                             }}
                           />
-                          <span className="text-sm">
+                          <span className="text-sm text-zinc-800">
                             {s.name}{" "}
-                            <span className="text-xs text-gray-500">
+                            <span className="text-xs text-zinc-500">
                               ({formatDuration(s.duration)})
                             </span>
                           </span>
@@ -391,7 +405,7 @@ function PackageModal({
               </div>
 
               {errors.included_services && (
-                <p className="mt-1 text-sm text-red-600">
+                <p className="mt-1 text-xs text-rose-600">
                   {errors.included_services.message as string}
                 </p>
               )}
@@ -399,7 +413,7 @@ function PackageModal({
               <div className="mt-2 flex gap-3">
                 <button
                   type="button"
-                  className="text-xs text-gray-600 underline"
+                  className="text-xs font-semibold text-amber-700 underline"
                   onClick={() => {
                     const all = Array.from(new Set(services.map((s) => s.id)));
                     includedField.onChange(all);
@@ -409,7 +423,7 @@ function PackageModal({
                 </button>
                 <button
                   type="button"
-                  className="text-xs text-gray-600 underline"
+                  className="text-xs text-zinc-600 underline"
                   onClick={() => includedField.onChange([])}
                 >
                   Clear
@@ -417,59 +431,72 @@ function PackageModal({
               </div>
             </div>
 
-            {/* Expected Duration (read-only) */}
-            <div>
-              <label className="mb-1 block text-sm font-medium">
-                Expected Duration:
-              </label>
-              <input
-                type="text"
-                value={formatDuration(expectedDuration)}
-                readOnly
-                className="w-full cursor-not-allowed rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-gray-700"
-                title="Auto-calculated from selected services"
-              />
-            </div>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              {/* Expected Duration (read-only) */}
+              <div>
+                <label className="mb-1 block text-sm font-semibold text-zinc-800">
+                  Expected Duration
+                </label>
+                <input
+                  type="text"
+                  value={formatDuration(
+                    ((includedField.value as string[]) ?? []).reduce(
+                      (sum, id) =>
+                        sum +
+                        (services.find((s) => s.id === id)?.duration ?? 0),
+                      0
+                    )
+                  )}
+                  readOnly
+                  className="w-full cursor-not-allowed rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-700"
+                  title="Auto-calculated from selected services"
+                />
+              </div>
 
-            <div>
-              <label className="mb-1 block text-sm font-medium">Price:</label>
-              <input
-                type="number"
-                step="0.01"
-                inputMode="decimal"
-                placeholder="₱0.00"
-                {...register("price", { valueAsNumber: true })}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:ring-2 focus:ring-amber-400"
-              />
-              {errors.price && (
-                <p className="mt-1 text-sm text-red-600">
-                  {errors.price.message as string}
-                </p>
-              )}
+              <div>
+                <label className="mb-1 block text-sm font-semibold text-zinc-800">
+                  Price
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  inputMode="decimal"
+                  placeholder="₱0.00"
+                  {...register("price", { valueAsNumber: true })}
+                  className="w-full rounded-xl border border-zinc-200 bg-white/80 px-3 py-2 text-sm shadow-sm outline-none focus:ring-2 focus:ring-amber-300"
+                />
+                {errors.price && (
+                  <p className="mt-1 text-xs text-rose-600">
+                    {errors.price.message as string}
+                  </p>
+                )}
+              </div>
             </div>
           </div>
 
-          <div className="col-span-1 mt-2 flex items-center justify-center gap-4 md:col-span-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-xl bg-red-600 px-6 py-2 font-medium text-white shadow hover:bg-red-700"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              className="rounded-xl bg-amber-400 px-6 py-2 font-medium text-black shadow hover:bg-amber-500 disabled:opacity-50"
-            >
-              {isSubmitting
-                ? mode === "edit"
-                  ? "Updating…"
-                  : "Saving…"
-                : mode === "edit"
-                ? "Update"
-                : "Save"}
-            </button>
+          <div className="md:col-span-2 border-t border-zinc-200/70 pt-4">
+            <div className="flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-xl border border-zinc-300 bg-white px-5 py-2 text-sm font-semibold text-zinc-800 hover:bg-zinc-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="rounded-xl bg-amber-500 px-5 py-2 text-sm font-semibold text-white shadow-sm hover:bg-amber-600 disabled:opacity-60"
+              >
+                {isSubmitting
+                  ? mode === "edit"
+                    ? "Updating…"
+                    : "Saving…"
+                  : mode === "edit"
+                  ? "Update"
+                  : "Save"}
+              </button>
+            </div>
           </div>
         </form>
       </div>
@@ -504,12 +531,10 @@ const AdminPackages: React.FC = () => {
     packages: any[];
   };
 
-  // 👇 tab state
   const [activeTab, setActiveTab] = useState<"packages" | "discount">(
     "packages"
   );
 
-  // Normalize services to {id,name,duration}
   const normalizedServices = useMemo(
     () =>
       (svc ?? []).map((s: any) => ({
@@ -610,42 +635,43 @@ const AdminPackages: React.FC = () => {
   };
 
   return (
-    <div className="mx-auto max-w-6xl p-6">
+    <div className="mx-auto max-w-7xl p-6">
       <h1 className="text-3xl font-bold">Promo Management</h1>
 
-      {/* Tabs */}
-      <div className="mt-6 flex items-center gap-6">
+      {/* Tabs + Actions */}
+      <div className="mt-6 flex flex-wrap items-center gap-3">
         <button
-          className={
-            "rounded-full px-4 py-2 text-sm font-medium shadow " +
-            (activeTab === "packages"
-              ? "bg-amber-400 text-black"
-              : "text-gray-600 hover:bg-gray-100")
-          }
+          className={[
+            "relative rounded-full px-4 py-2 text-sm font-semibold transition",
+            "focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-300",
+            activeTab === "packages"
+              ? "bg-amber-500 text-white shadow-[0_6px_20px_-8px_rgba(245,158,11,0.65)]"
+              : "bg-zinc-100 text-zinc-800 hover:bg-zinc-200",
+          ].join(" ")}
           onClick={() => setActiveTab("packages")}
         >
           Packages
         </button>
         <button
-          className={
-            "rounded-full px-4 py-2 text-sm font-medium " +
-            (activeTab === "discount"
-              ? "bg-amber-400 text-black shadow"
-              : "text-gray-600 hover:bg-gray-100")
-          }
+          className={[
+            "relative rounded-full px-4 py-2 text-sm font-semibold transition",
+            "focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-300",
+            activeTab === "discount"
+              ? "bg-amber-500 text-white shadow-[0_6px_20px_-8px_rgba(245,158,11,0.65)]"
+              : "bg-zinc-100 text-zinc-800 hover:bg-zinc-200",
+          ].join(" ")}
           onClick={() => setActiveTab("discount")}
         >
           Discount
         </button>
 
-        {/* Only show the Add button on the Packages tab */}
         {activeTab === "packages" && (
           <div className="ml-auto">
             <button
               onClick={() => setOpenAdd(true)}
-              className="flex items-center gap-2 rounded-xl bg-amber-400 px-4 py-2 font-medium text-black shadow hover:bg-amber-500"
+              className="inline-flex items-center gap-2 rounded-xl border border-amber-300/60 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-800 shadow-sm hover:bg-amber-100 active:scale-[0.99] transition"
             >
-              <Plus className="h-5 w-5" />
+              <Plus className="h-4 w-4" />
               Add Package
             </button>
           </div>
@@ -655,104 +681,118 @@ const AdminPackages: React.FC = () => {
       {/* Content by tab */}
       {activeTab === "discount" ? (
         <div className="mt-6">
-          {/* Render your discount admin; put its own "Add" button inside that component */}
           <AdminDiscount />
         </div>
       ) : (
         <>
-          {/* PACKAGES content */}
-          <div className="mt-4 overflow-hidden rounded-2xl border border-gray-200">
-            <table className="min-w-full divide-y divide-gray-200 text-sm">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-4 py-3 text-left font-semibold">Name</th>
-                  <th className="px-4 py-3 text-left font-semibold">Type</th>
-                  <th className="px-4 py-3 text-left font-semibold">
-                    Included Services
-                  </th>
-                  <th className="px-4 py-3 text-left font-semibold">Price</th>
-                  <th className="px-4 py-3 text-left font-semibold">
-                    Expected Duration
-                  </th>
-                  <th className="px-4 py-3 text-left font-semibold">
-                    Validity
-                  </th>
-                  <th className="px-4 py-3 text-left font-semibold">Status</th>
-                  <th className="px-4 py-3 text-left font-semibold">Action</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {(packages ?? []).map((p: any, i: number) => {
-                  const row: Row = {
-                    id: String(p.package_id),
-                    name: String(p.name),
-                    type: "Package",
-                    included_services: (p.included_services ?? []) as string[],
-                    price: Number(p.price),
-                    expected_duration:
-                      typeof p.expected_duration === "number"
-                        ? p.expected_duration
-                        : Number(p.expected_duration ?? 0) || 0,
-                    validity: `${humanDate(p.start_date)} – ${humanDate(
-                      p.end_date
-                    )}`,
-                    status: (p.status as Row["status"]) ?? "Active",
-                  };
-                  return (
-                    <tr
-                      key={row.id}
-                      className={i % 2 === 0 ? "bg-orange-50/50" : "bg-white"}
-                    >
-                      <td className="px-4 py-4">{row.name}</td>
-                      <td className="px-4 py-4">{row.type}</td>
-                      <td className="px-4 py-4">
-                        {row.included_services
-                          .map((id) => serviceNameMap.get(id))
-                          .filter(Boolean)
-                          .join(", ") || "—"}
-                      </td>
-                      <td className="px-4 py-4">{peso(row.price)}</td>
-                      <td className="px-4 py-4">
-                        {formatDuration(row.expected_duration ?? 0)}
-                      </td>
-                      <td className="px-4 py-4">{row.validity}</td>
-                      <td className="px-4 py-4">
-                        <StatusPill value={row.status} />
-                      </td>
-                      <td className="px-4 py-4">
-                        <div className="flex items-center gap-3 text-gray-600">
-                          <button
-                            className="rounded p-1 hover:bg-gray-100"
-                            title="Edit"
-                            onClick={() => openEditModalFor(p)}
-                          >
-                            <Pencil className="h-5 w-5" />
-                          </button>
-                          <button
-                            className="rounded p-1 hover:bg-gray-100"
-                            title="Delete"
-                            onClick={() => openDeleteModalFor(p)}
-                          >
-                            <Trash2 className="h-5 w-5 text-red-600" />
-                          </button>
-                        </div>
+          {/* Packages Table */}
+          <section className="mt-6 overflow-hidden rounded-2xl border border-zinc-200 bg-white/70 shadow-sm backdrop-blur-sm">
+            <div className="max-h-[70vh] overflow-auto">
+              <table className="min-w-full text-left text-sm">
+                <thead className="sticky top-0 z-10 border-b border-zinc-200 bg-white/90 backdrop-blur">
+                  <tr className="text-[11px] uppercase tracking-wide text-zinc-500">
+                    <th className="px-5 py-3 font-semibold">Name</th>
+                    <th className="px-5 py-3 font-semibold">Type</th>
+                    <th className="px-5 py-3 font-semibold">
+                      Included Services
+                    </th>
+                    <th className="px-5 py-3 font-semibold">Price</th>
+                    <th className="px-5 py-3 font-semibold">
+                      Expected Duration
+                    </th>
+                    <th className="px-5 py-3 font-semibold">Validity</th>
+                    <th className="px-5 py-3 font-semibold">Status</th>
+                    <th className="px-5 py-3 font-semibold text-right">
+                      Action
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-100">
+                  {(packages ?? []).map((p: any, i: number) => {
+                    const row: Row = {
+                      id: String(p.package_id),
+                      name: String(p.name),
+                      type: "Package",
+                      included_services: (p.included_services ??
+                        []) as string[],
+                      price: Number(p.price),
+                      expected_duration:
+                        typeof p.expected_duration === "number"
+                          ? p.expected_duration
+                          : Number(p.expected_duration ?? 0) || 0,
+                      validity: `${humanDate(p.start_date)} – ${humanDate(
+                        p.end_date
+                      )}`,
+                      status: (p.status as Row["status"]) ?? "Active",
+                    };
+                    return (
+                      <tr
+                        key={row.id}
+                        className={[
+                          "transition-colors",
+                          i % 2 === 0 ? "bg-white" : "bg-amber-50/30",
+                          "hover:bg-amber-50/60",
+                        ].join(" ")}
+                      >
+                        <td className="px-5 py-3">
+                          <div className="font-medium text-zinc-900">
+                            {row.name}
+                          </div>
+                        </td>
+                        <td className="px-5 py-3 text-zinc-800">{row.type}</td>
+                        <td className="px-5 py-3 text-zinc-800">
+                          {row.included_services
+                            .map((id) => serviceNameMap.get(id))
+                            .filter(Boolean)
+                            .join(", ") || "—"}
+                        </td>
+                        <td className="px-5 py-3 text-zinc-900">
+                          {peso(row.price)}
+                        </td>
+                        <td className="px-5 py-3 text-zinc-900">
+                          {formatDuration(row.expected_duration ?? 0)}
+                        </td>
+                        <td className="px-5 py-3 text-zinc-800">
+                          {row.validity}
+                        </td>
+                        <td className="px-5 py-3">
+                          <StatusPill value={row.status} />
+                        </td>
+                        <td className="px-5 py-3">
+                          <div className="flex items-center justify-end gap-2">
+                            <button
+                              className="inline-flex items-center rounded-lg p-2 text-zinc-700 hover:bg-zinc-100 focus:outline-none focus:ring-2 focus:ring-amber-300"
+                              title="Edit"
+                              onClick={() => openEditModalFor(p)}
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </button>
+                            <button
+                              className="inline-flex items-center rounded-lg p-2 text-rose-600 hover:bg-rose-50 focus:outline-none focus:ring-2 focus:ring-rose-300"
+                              title="Delete"
+                              onClick={() => openDeleteModalFor(p)}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {(!packages || packages.length === 0) && (
+                    <tr>
+                      <td
+                        className="px-5 py-10 text-center text-zinc-500"
+                        colSpan={8}
+                      >
+                        No packages yet.
                       </td>
                     </tr>
-                  );
-                })}
-                {(!packages || packages.length === 0) && (
-                  <tr>
-                    <td
-                      className="px-4 py-6 text-center text-gray-500"
-                      colSpan={8}
-                    >
-                      No packages yet.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
 
           {/* Add Modal */}
           <PackageModal

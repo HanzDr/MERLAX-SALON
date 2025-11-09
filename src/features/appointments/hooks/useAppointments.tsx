@@ -25,9 +25,9 @@ import {
 } from "../methods/appointmentsHelperMethods";
 
 /* === DB naming adapters (match your actual schema) === */
-const TBL_APPT_STYLIST = "AppointmentStylists"; // singular in your DB
+const TBL_APPT_STYLIST = "AppointmentStylists";
 const TBL_APPT_PLAN = "AppointmentServicePlan";
-const COL_PACKAGE_ID = "package_id" as const; // <-- use this consistently
+const COL_PACKAGE_ID = "package_id" as const;
 
 /* ===================================================================== */
 export function useAppointments() {
@@ -102,7 +102,9 @@ export function useAppointments() {
       plan: { type: "Service" | "Package"; id: string };
       date: string; // YYYY-MM-DD
     }) => {
-      const weekday = dayKey(localDateFromISO(args.date).getDay());
+      const weekday = normalizeDay(
+        dayKey(localDateFromISO(args.date).getDay())
+      );
 
       // 1) Schedules
       const schedRes = await supabase
@@ -226,9 +228,12 @@ export function useAppointments() {
     async (args: {
       discount_id: string;
       customer_id?: string | null;
+      /** When true, ignore usage caps entirely (admin bypass). */
+      bypassUsageCaps?: boolean;
     }): Promise<DiscountEligibility> => {
-      const { discount_id, customer_id } = args;
+      const { discount_id, customer_id, bypassUsageCaps } = args;
 
+      // Must exist
       const { data: disc, error: discErr } = await supabase
         .from("Discounts")
         .select("discount_id,amount_of_uses")
@@ -246,10 +251,33 @@ export function useAppointments() {
         };
       }
 
-      const limits = disc as DiscountLimitRow;
-      const globalCap = limits.amount_of_uses;
-      const customerCap = 1 as number | null; // DEFAULT_PER_CUSTOMER_LIMIT
+      // Admin bypass: always OK (still return limits for context)
+      if (bypassUsageCaps) {
+        return {
+          ok: true,
+          global_used: 0,
+          global_limit: null, // we don't enforce/global-cap in current schema
+          customer_used: 0,
+          customer_limit: (disc as DiscountLimitRow).amount_of_uses ?? null,
+        };
+      }
 
+      // CURRENT BEHAVIOR: amount_of_uses = per-customer cap
+      const customerCap = (disc as DiscountLimitRow).amount_of_uses ?? null;
+
+      // If no customer id (walk-in not linked), we can't per-user track → allow
+      // (You can change this to block or create a walk-in identity scheme)
+      if (!customer_id) {
+        return {
+          ok: true,
+          global_used: 0,
+          global_limit: null,
+          customer_used: 0,
+          customer_limit: customerCap,
+        };
+      }
+
+      // Find all appointment ids that used this discount
       const { data: links, error: linkErr } = await supabase
         .from("AppointmentDiscount")
         .select("appointment_id")
@@ -260,7 +288,7 @@ export function useAppointments() {
         .map((r: any) => r.appointment_id)
         .filter(Boolean);
 
-      let appts: AppointmentRow[] = [];
+      let apptsForThisCustomer: AppointmentRow[] = [];
       if (apptIds.length > 0) {
         const { data: apptsData, error: apptsErr } = await supabase
           .from("Appointments")
@@ -269,32 +297,21 @@ export function useAppointments() {
           .eq("display", true)
           .in("status", COUNT_STATUSES as unknown as string[]);
         if (apptsErr) throw apptsErr;
-        appts = (apptsData ?? []) as AppointmentRow[];
+
+        apptsForThisCustomer = (apptsData ?? []).filter(
+          (a: any) => a.customer_id === customer_id
+        ) as AppointmentRow[];
       }
 
-      const globalUsed = appts.length;
-      const customerUsed =
-        customer_id == null
-          ? 0
-          : appts.filter((a) => a.customer_id === customer_id).length;
+      const customerUsed = apptsForThisCustomer.length;
 
-      if (globalCap != null && globalUsed >= globalCap) {
-        return {
-          ok: false,
-          reason: "global",
-          global_used: globalUsed,
-          global_limit: globalCap,
-          customer_used: customerUsed,
-          customer_limit: customerCap,
-        };
-      }
-
-      if (customer_id && customerCap != null && customerUsed >= customerCap) {
+      // Enforce per-customer cap only
+      if (customerCap != null && customerUsed >= customerCap) {
         return {
           ok: false,
           reason: "customer",
-          global_used: globalUsed,
-          global_limit: globalCap,
+          global_used: 0, // we are not enforcing a global cap here
+          global_limit: null,
           customer_used: customerUsed,
           customer_limit: customerCap,
         };
@@ -302,8 +319,8 @@ export function useAppointments() {
 
       return {
         ok: true,
-        global_used: globalUsed,
-        global_limit: globalCap,
+        global_used: 0,
+        global_limit: null,
         customer_used: customerUsed,
         customer_limit: customerCap,
       };
@@ -312,16 +329,120 @@ export function useAppointments() {
   );
 
   const filterEligibleDiscountsForCustomer = useCallback(
-    async (discountIds: string[], customer_id?: string | null) => {
+    async (
+      discountIds: string[],
+      customer_id?: string | null,
+      /** When true, ignore usage caps entirely (admin bypass). */
+      bypassUsageCaps?: boolean
+    ) => {
       if (discountIds.length === 0) return [];
+      if (bypassUsageCaps) return discountIds; // admin: allow all given ids
+
       const checks = await Promise.all(
         discountIds.map((id) =>
           canUseDiscount({ discount_id: id, customer_id })
         )
       );
+
       return discountIds.filter((_, i) => checks[i].ok);
     },
     [canUseDiscount]
+  );
+
+  /* ----------------- NEW: Discounts per plan + eligibility  ----------------- */
+
+  /** Return discount rows that *target* a given plan (service or package). */
+  const getDiscountsForPlan = useCallback(
+    async (args: {
+      plan_type: "Service" | "Package";
+      plan_id: string;
+      /** Optional: filter by active window on a given date (YYYY-MM-DD). */
+      on_date?: string;
+    }): Promise<
+      Array<{
+        discount_id: string;
+        name: string;
+        amount?: number | null;
+        percent?: number | null;
+        amount_of_uses?: number | null; // global cap
+        start_date?: string | null;
+        end_date?: string | null;
+      }>
+    > => {
+      const { plan_type, plan_id, on_date } = args;
+
+      // If your schema isn’t like this, tweak the selection below.
+      const targetCol = plan_type === "Service" ? "service_id" : "package_id";
+      const { data: links, error: linkErr } = await supabase
+        .from("DiscountTargets")
+        .select("discount_id")
+        .eq(targetCol, plan_id);
+      if (linkErr) throw linkErr;
+
+      const dIds = (links ?? []).map((r: any) => r.discount_id).filter(Boolean);
+      if (!dIds.length) return [];
+
+      let base = supabase
+        .from("Discounts")
+        .select(
+          "discount_id,name,amount,percent,amount_of_uses,start_date,end_date,active,display"
+        )
+        .in("discount_id", dIds)
+        .eq("active", true)
+        .eq("display", true);
+
+      const { data, error } = await base;
+      if (error) throw error;
+
+      const list = (data ?? []) as Array<{
+        discount_id: string;
+        name: string;
+        amount?: number | null;
+        percent?: number | null;
+        amount_of_uses?: number | null;
+        start_date?: string | null;
+        end_date?: string | null;
+      }>;
+
+      if (!on_date) return list;
+
+      const d0 = new Date(on_date);
+      return list.filter((d) => {
+        const sOk = !d.start_date || new Date(d.start_date.slice(0, 10)) <= d0;
+        const eOk = !d.end_date || new Date(d.end_date.slice(0, 10)) >= d0;
+        return sOk && eOk;
+      });
+    },
+    []
+  );
+
+  /** For a plan + customer, return only the *eligible* discounts. */
+  const getEligibleDiscountsForSelection = useCallback(
+    async (args: {
+      plan_type: "Service" | "Package";
+      plan_id: string;
+      customer_id?: string | null;
+      is_admin?: boolean;
+      on_date?: string; // optional, for date-ranged discounts
+    }) => {
+      const { plan_type, plan_id, customer_id, is_admin, on_date } = args;
+
+      const rows = await getDiscountsForPlan({ plan_type, plan_id, on_date });
+      const allIds = rows.map((r) => r.discount_id);
+
+      // Admin bypass (unlimited uses)
+      if (is_admin) return { eligibleIds: allIds, discounts: rows };
+
+      const allowed = await filterEligibleDiscountsForCustomer(
+        allIds,
+        customer_id ?? undefined,
+        /* bypassUsageCaps */ false
+      );
+
+      const eligibleRows = rows.filter((r) => allowed.includes(r.discount_id));
+      return { eligibleIds: allowed, discounts: eligibleRows };
+    },
+    [getDiscountsForPlan, filterEligibleDiscountsForCustomer]
   );
 
   /* ------------------------------ CRUD ------------------------------ */
@@ -338,8 +459,6 @@ export function useAppointments() {
       total_amount?: number | null;
       payment_method?: PaymentMethod | null;
       discount_id?: string | null;
-
-      // 👇 NEW: walk-in names (schema has firstName, lastName)
       firstName?: string;
       lastName?: string;
       middleName?: string;
@@ -353,12 +472,11 @@ export function useAppointments() {
         comments: args.comments ?? null,
         total_amount: args.total_amount ?? null,
         payment_method: args.payment_method ?? null,
-        status: isWalkIn ? "Walk-In" : "Booked", // 👈 distinguish in DB
+        status: isWalkIn ? "Walk-In" : "Booked",
         display: true,
         customer_id: args.customer_id ?? null,
       };
 
-      // Only populate name fields for walk-ins
       if (isWalkIn) {
         if (args.firstName) insertPayload.firstName = args.firstName;
         if (args.lastName) insertPayload.lastName = args.lastName;
@@ -374,13 +492,11 @@ export function useAppointments() {
 
       const appointmentId = appt.appointment_id;
 
-      // singular AppointmentStylists
       const { error: stylistErr } = await supabase
         .from(TBL_APPT_STYLIST)
         .insert({ appointment_id: appointmentId, stylist_id: args.stylist_id });
       if (stylistErr) throw stylistErr;
 
-      // AppointmentServicePlan with package_id
       const planRow =
         args.plan_type === "Service"
           ? {
@@ -427,12 +543,12 @@ export function useAppointments() {
     []
   );
 
-  /** 🧩 Admin modal: replace stylists/plans + update amount/payment (schema-aligned) */
+  /** Replace stylists/plans + update amount/payment */
   const updateAppointmentDetails = useCallback(
     async (args: {
       appointment_id: string;
-      stylist_ids: string[]; // full replacement
-      plans: Array<{ type: "Service" | "Package"; id: string }>; // full replacement
+      stylist_ids: string[];
+      plans: Array<{ type: "Service" | "Package"; id: string }>;
       total_amount?: number | null;
       payment_method?: PaymentMethod | null;
     }) => {
@@ -444,7 +560,6 @@ export function useAppointments() {
         payment_method,
       } = args;
 
-      // 1) Update amount / payment
       if (total_amount != null || payment_method != null) {
         const { error } = await supabase
           .from("Appointments")
@@ -457,7 +572,6 @@ export function useAppointments() {
         if (error) throw error;
       }
 
-      // 2) Replace stylists (delete → insert) on AppointmentStylists
       {
         const { error: delErr } = await supabase
           .from(TBL_APPT_STYLIST)
@@ -477,7 +591,6 @@ export function useAppointments() {
         }
       }
 
-      // 3) Replace plans (delete → insert) on AppointmentServicePlan
       {
         const { error: delErr } = await supabase
           .from(TBL_APPT_PLAN)
@@ -512,6 +625,51 @@ export function useAppointments() {
     if (error) throw error;
     return true;
   }, []);
+
+  /* ----------------- NEW: Hard delete (cascade) ----------------- */
+  const deleteAppointmentCascade = useCallback(
+    async (appointment_id: string) => {
+      // delete child rows first, then the appointment
+      const errs: any[] = [];
+
+      const delDisc = await supabase
+        .from("AppointmentDiscount")
+        .delete()
+        .eq("appointment_id", appointment_id);
+      if (delDisc.error) errs.push(delDisc.error);
+
+      const delStylists = await supabase
+        .from(TBL_APPT_STYLIST)
+        .delete()
+        .eq("appointment_id", appointment_id);
+      if (delStylists.error) errs.push(delStylists.error);
+
+      const delPlans = await supabase
+        .from(TBL_APPT_PLAN)
+        .delete()
+        .eq("appointment_id", appointment_id);
+      if (delPlans.error) errs.push(delPlans.error);
+
+      const delApptProds = await supabase
+        .from("AppointmentProducts")
+        .delete()
+        .eq("appointment_id", appointment_id);
+      if (delApptProds.error) errs.push(delApptProds.error);
+
+      const delAppt = await supabase
+        .from("Appointments")
+        .delete()
+        .eq("appointment_id", appointment_id);
+      if (delAppt.error) errs.push(delAppt.error);
+
+      if (errs.length) {
+        const msg = errs.map((e) => e.message || String(e)).join("; ");
+        throw new Error(msg);
+      }
+      return true;
+    },
+    []
+  );
 
   /* ----------------- Admin: Next 3 weeks (Mon–Sat) ----------------- */
   const loadUpcomingAdminAppointments = useCallback(async (): Promise<
@@ -550,7 +708,6 @@ export function useAppointments() {
 
     const apptIds = appts.map((a) => a.appointment_id);
 
-    // --- Stylists (collect ALL stylists per appointment)
     const { data: links, error: linkErr } = await supabase
       .from(TBL_APPT_STYLIST)
       .select("appointment_id,stylist_id")
@@ -580,7 +737,6 @@ export function useAppointments() {
       );
     }
 
-    // --- Plans (use the correct package column) + allow multiple rows
     const { data: plans, error: planErr } = await supabase
       .from(TBL_APPT_PLAN)
       .select(`appointment_id,service_id,${COL_PACKAGE_ID}`)
@@ -648,7 +804,6 @@ export function useAppointments() {
     }
 
     const norm: AdminAppt[] = appts.map((a) => {
-      // ✅ status normalization — keep Ongoing so UI stays pink on refresh
       const rawLower = String(a.status ?? "").toLowerCase();
       const status: AdminAppt["status"] = /cancel/.test(rawLower)
         ? "Cancelled"
@@ -660,14 +815,12 @@ export function useAppointments() {
         ? "Walk-In"
         : "Booked";
 
-      // ALL stylists, joined
       const sids = apptToStylistIds.get(a.appointment_id) ?? [];
       const stylistNames = sids
         .map((id) => stylistNameById.get(id))
         .filter(Boolean) as string[];
       const stylist = stylistNames.length ? stylistNames.join(", ") : "—";
 
-      // ALL plans, joined (services + packages)
       const ref = apptPlanRef.get(a.appointment_id) ?? {
         service_ids: [],
         package_ids: [],
@@ -682,7 +835,6 @@ export function useAppointments() {
       ];
       const plan = planNames.length ? planNames.join(", ") : "—";
 
-      // prefer stored total; otherwise estimate
       let price = Number(a.total_amount ?? 0) || 0;
       if (!price) {
         const svcEst = ref.service_ids
@@ -724,18 +876,31 @@ export function useAppointments() {
 
   /* ----------------- Admin: History (paginated table) --------------- */
   async function loadAdminAppointmentHistory(opts: {
-    page: number; // 1-based
+    page: number;
     pageSize: number;
-    search?: string; // matches customer/stylist/notes/etc.
+    search?: string;
   }): Promise<{ items: HistoryRow[]; total: number }> {
     const { page, pageSize, search } = opts;
     const from = (page - 1) * pageSize;
     const to = from + pageSize - 1;
     const allowedStatus = ["Completed", "Cancelled", "completed", "cancelled"];
+
+    // Include walk-in name columns
     let base = supabase
       .from("Appointments")
       .select(
-        "appointment_id,date,status,total_amount,comments,customer_id,display",
+        `
+      appointment_id,
+      date,
+      status,
+      total_amount,
+      comments,
+      customer_id,
+      display,
+      "firstName",
+      "middleName",
+      "lastName"
+    `,
         { count: "exact" }
       )
       .eq("display", true)
@@ -753,13 +918,11 @@ export function useAppointments() {
 
     const itemsBase = pageRows ?? [];
 
-    // Collect IDs for joins
     const apptIds = itemsBase.map((r) => r.appointment_id);
     const customerIds = Array.from(
       new Set(itemsBase.map((r) => r.customer_id).filter(Boolean) as string[])
     );
 
-    // Appointment → stylist link (singular AppointmentStylists)
     const { data: links, error: linkErr } = await supabase
       .from(TBL_APPT_STYLIST)
       .select("appointment_id,stylist_id")
@@ -772,7 +935,6 @@ export function useAppointments() {
       )
     );
 
-    // Load stylist names
     let stylistNameById = new Map<string, string>();
     if (stylistIds.length) {
       const { data: stylists, error: sErr } = await supabase
@@ -785,7 +947,6 @@ export function useAppointments() {
       );
     }
 
-    // Load customer names (first/middle/last)
     let customerNameById = new Map<string, string>();
     if (customerIds.length) {
       const { data: customers, error: cErr } = await supabase
@@ -794,19 +955,20 @@ export function useAppointments() {
         .in("customer_id", customerIds);
       if (cErr) throw cErr;
 
+      const buildCustomerNameLocal = (c: any) =>
+        [c.firstName, c.middleName, c.lastName]
+          .map((x: any) => (x ?? "").trim())
+          .filter(Boolean)
+          .join(" ");
+
       customerNameById = new Map(
         (customers ?? []).map((c: any) => [
           c.customer_id,
-          buildCustomerName({
-            firstName: c.firstName,
-            middleName: c.middleName,
-            lastName: c.lastName,
-          }) ?? "",
+          buildCustomerNameLocal(c) ?? "",
         ])
       );
     }
 
-    // If search includes a person name, match on computed names too
     let filteredRows = itemsBase;
     if (search && search.trim()) {
       const q = search.trim().toLowerCase();
@@ -820,7 +982,10 @@ export function useAppointments() {
           : null;
         return (
           (cust ?? "").toLowerCase().includes(q) ||
-          (sty ?? "").toLowerCase().includes(q)
+          (sty ?? "").toLowerCase().includes(q) ||
+          [r.firstName, r.middleName, r.lastName]
+            .map((x: any) => (x ?? "").toLowerCase())
+            .some((s: string) => s.includes(q))
         );
       };
       filteredRows = filteredRows.filter((r) => {
@@ -835,7 +1000,6 @@ export function useAppointments() {
       });
     }
 
-    // Map to HistoryRow
     const items: HistoryRow[] = filteredRows.map((r: any) => {
       const link = (links ?? []).find(
         (l) => l.appointment_id === r.appointment_id
@@ -851,7 +1015,6 @@ export function useAppointments() {
       const note =
         r.customer_id == null ? "Walk-In" : r.comments ?? "Booked Online";
 
-      // Normalize status for UI
       const statusRaw: string = r.status ?? "";
       const status = /complete/i.test(statusRaw)
         ? "Completed"
@@ -872,13 +1035,16 @@ export function useAppointments() {
         total_amount: r.total_amount ?? null,
         notes: note,
         customer_id: r.customer_id ?? null,
+        firstName: r.firstName ?? null,
+        middleName: r.middleName ?? null,
+        lastName: r.lastName ?? null,
       };
     });
 
     return { items, total: count ?? items.length };
   }
 
-  // useAppointments.ts
+  // -------- Customer upcoming (Booked) --------
   const loadUpcomingCustomerAppointments = useCallback(
     async (customer_id: string) => {
       const todayISO = new Date().toISOString().slice(0, 10);
@@ -889,13 +1055,235 @@ export function useAppointments() {
         )
         .eq("customer_id", customer_id)
         .eq("display", true)
-        .eq("status", "Booked") // ← key line
+        .eq("status", "Booked")
         .gte("date", todayISO)
         .order("date", { ascending: true })
         .order("expectedStart_time", { ascending: true });
 
       if (error) throw error;
       return data ?? [];
+    },
+    []
+  );
+
+  // ----------------- Customer History (paginated) — with STATUS support -----------------
+  // ----------------- Customer History (paginated) — with STATUS support -----------------
+  const loadCustomerAppointmentHistory = useCallback(
+    async (opts: {
+      customer_id: string;
+      page: number;
+      pageSize: number;
+      status?: "Completed" | "Cancelled" | "Ongoing" | "Booked";
+      search?: string;
+    }): Promise<{
+      items: Array<
+        HistoryRow & {
+          start?: string | null;
+          end?: string | null;
+          payment_method?: string | null;
+        }
+      >;
+      total: number;
+    }> => {
+      const { customer_id, page, pageSize, status, search } = opts;
+      const from = (page - 1) * pageSize;
+      const to = from + pageSize - 1;
+
+      const statusList = status
+        ? [status, status.toLowerCase()]
+        : ["Completed", "Cancelled", "completed", "cancelled"];
+
+      // ✅ Include payment_method from your Appointments schema
+      let base = supabase
+        .from("Appointments")
+        .select(
+          `
+          appointment_id,
+          date,
+          status,
+          total_amount,
+          comments,
+          customer_id,
+          display,
+          expectedStart_time,
+          expectedEnd_time,
+          payment_method
+        `,
+          { count: "exact" }
+        )
+        .eq("customer_id", customer_id)
+        .eq("display", true)
+        .in("status", statusList as unknown as string[])
+        .order("date", { ascending: false })
+        .range(from, to);
+
+      if (search && search.trim()) {
+        const term = `%${search.trim()}%`;
+        base = base.or(`status.ilike.${term},comments.ilike.${term}`);
+      }
+
+      const { data, error, count } = await base;
+      if (error) throw error;
+
+      const items =
+        (data ?? []).map((r) => {
+          const statusRaw = String(r.status ?? "");
+          const normalized = /complete/i.test(statusRaw)
+            ? "Completed"
+            : /cancel/i.test(statusRaw)
+            ? "Cancelled"
+            : /ongoing|on-going/i.test(statusRaw)
+            ? "Ongoing"
+            : /book|confirm/i.test(statusRaw)
+            ? "Booked"
+            : statusRaw;
+
+          const note =
+            r.customer_id == null ? "Walk-In" : r.comments ?? "Booked Online";
+
+          return {
+            id: r.appointment_id as string,
+            customer_name: null,
+            stylist_name: null,
+            service_date: r.date as string,
+            status: normalized as HistoryRow["status"],
+            total_amount: (r.total_amount as number) ?? null,
+            notes: note,
+            customer_id: (r.customer_id as string) ?? null,
+            start: r.expectedStart_time
+              ? String(r.expectedStart_time).slice(0, 5)
+              : null,
+            end: r.expectedEnd_time
+              ? String(r.expectedEnd_time).slice(0, 5)
+              : null,
+            payment_method: (r as any).payment_method ?? null, // ✅ pass through
+          };
+        }) ?? [];
+
+      return { items, total: count ?? items.length };
+    },
+    []
+  );
+
+  // ----------------- Shared: stylists + plan names by appt -----------------
+  type ApptMeta = Record<
+    string,
+    { stylists: string[]; services: string[]; packages: string[] }
+  >;
+
+  const getAppointmentPeopleAndPlans = useCallback(
+    async (appointmentIds: string[]): Promise<ApptMeta> => {
+      const ids = Array.from(
+        new Set(
+          (appointmentIds ?? [])
+            .map((v) => (typeof v === "string" ? v.trim() : String(v ?? "")))
+            .filter(Boolean)
+        )
+      );
+      if (!ids.length) return {};
+
+      const meta: ApptMeta = {};
+      for (const id of ids)
+        meta[id] = { stylists: [], services: [], packages: [] };
+
+      // Plans
+      const { data: planRows, error: planErr } = await supabase
+        .from("AppointmentServicePlan")
+        .select("appointment_id, service_id, package_id")
+        .in("appointment_id", ids);
+      if (planErr) throw planErr;
+
+      const serviceIds = Array.from(
+        new Set((planRows ?? []).map((p) => p.service_id).filter(Boolean))
+      ) as string[];
+      const packageIds = Array.from(
+        new Set((planRows ?? []).map((p) => p.package_id).filter(Boolean))
+      ) as string[];
+
+      let svcNameById = new Map<string, string>();
+      if (serviceIds.length) {
+        const { data: svcRows, error: svcErr } = await supabase
+          .from("Services")
+          .select("service_id,name")
+          .in("service_id", serviceIds);
+        if (svcErr) throw svcErr;
+        svcNameById = new Map(
+          (svcRows ?? []).map((s: any) => [s.service_id, s.name as string])
+        );
+      }
+
+      let pkgNameById = new Map<string, string>();
+      if (packageIds.length) {
+        const { data: pkgRows, error: pkgErr } = await supabase
+          .from("Package")
+          .select("package_id,name")
+          .in("package_id", packageIds);
+        if (pkgErr) throw pkgErr;
+        pkgNameById = new Map(
+          (pkgRows ?? []).map((p: any) => [p.package_id, p.name as string])
+        );
+      }
+
+      for (const p of planRows ?? []) {
+        const k =
+          typeof p.appointment_id === "string"
+            ? p.appointment_id.trim()
+            : String(p.appointment_id);
+        const m = meta[k];
+        if (!m) continue;
+        if (p.service_id) {
+          const n = svcNameById.get(p.service_id) ?? "";
+          if (n) m.services.push(n);
+        }
+        if (p.package_id) {
+          const n = pkgNameById.get(p.package_id) ?? "";
+          if (n) m.packages.push(n);
+        }
+      }
+
+      // Stylists
+      const { data: links, error: linkErr } = await supabase
+        .from("AppointmentStylists")
+        .select("appointment_id,stylist_id")
+        .in("appointment_id", ids);
+      if (linkErr) throw linkErr;
+
+      const stylistIds = Array.from(
+        new Set((links ?? []).map((l) => l.stylist_id).filter(Boolean))
+      ) as string[];
+
+      let stylistNameById = new Map<string, string>();
+      if (stylistIds.length) {
+        const { data: sRows, error: sErr } = await supabase
+          .from("Stylists")
+          .select("stylist_id,name")
+          .in("stylist_id", stylistIds);
+        if (sErr) throw sErr;
+        stylistNameById = new Map(
+          (sRows ?? []).map((s: any) => [s.stylist_id, s.name as string])
+        );
+      }
+
+      for (const l of links ?? []) {
+        const k =
+          typeof l.appointment_id === "string"
+            ? l.appointment_id.trim()
+            : String(l.appointment_id);
+        const m = meta[k];
+        if (!m) continue;
+        const n = l.stylist_id ? stylistNameById.get(l.stylist_id) ?? "" : "";
+        if (n) m.stylists.push(n);
+      }
+
+      // Deduplicate
+      for (const id of Object.keys(meta)) {
+        const m = meta[id];
+        m.stylists = Array.from(new Set(m.stylists));
+        m.services = Array.from(new Set(m.services));
+        m.packages = Array.from(new Set(m.packages));
+      }
+
+      return meta;
     },
     []
   );
@@ -908,19 +1296,25 @@ export function useAppointments() {
     loadPackages,
     getPlanOptionsForStylist,
     getAvailableTimeSlots,
+    // NEW
+    getDiscountsForPlan,
+    getEligibleDiscountsForSelection,
+    // CRUD
     createAppointment,
     updateAppointment,
     updateAppointmentDetails,
     softDeleteAppointment,
+    deleteAppointmentCascade,
     loadUpcomingCustomerAppointments,
-
+    loadCustomerAppointmentHistory,
     // Discounts
     canUseDiscount,
     filterEligibleDiscountsForCustomer,
-
     // Admin helpers
     loadUpcomingAdminAppointments,
     loadAdminAppointmentHistory,
+    // Shared meta resolver
+    getAppointmentPeopleAndPlans,
   };
 }
 

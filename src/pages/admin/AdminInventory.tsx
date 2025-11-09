@@ -81,7 +81,7 @@ const AdminInventory: React.FC = () => {
   const [moveRows, setMoveRows] = useState<MoveLineRow[]>([]);
   const [moveSaving, setMoveSaving] = useState(false);
 
-  // include category, packaging, and currentQty for validation & labels
+  // include category, packaging, currentQty, and price for validation & labels
   const [productOptions, setProductOptions] = useState<
     {
       id: string;
@@ -89,6 +89,7 @@ const AdminInventory: React.FC = () => {
       category?: string | null;
       packaging?: string | null;
       currentQty: number;
+      price: number; // used to stamp product_unit_price on submit
     }[]
   >([]);
 
@@ -180,7 +181,7 @@ const AdminInventory: React.FC = () => {
     }
   }, []);
 
-  /* --- NEW: fetch categories on page load so the filter dropdown is populated immediately --- */
+  /* --- fetch categories on page load so the filter dropdown is populated immediately --- */
   useEffect(() => {
     fetchCategories().catch(() => {});
   }, [fetchCategories]);
@@ -208,9 +209,11 @@ const AdminInventory: React.FC = () => {
       let base = supabase
         .from("Products")
         .select(
-          "product_id, name, description, category, packaging, quantity, price, created_at, lowStockLevel",
+          'product_id, name, description, category, packaging, quantity, price, created_at, lowStockLevel, "isDisplay"',
           { count: "exact" }
-        );
+        )
+        // show visible or legacy (NULL) rows
+        .or("isDisplay.is.null,isDisplay.eq.true");
 
       if (q) {
         base = base.or(
@@ -221,8 +224,7 @@ const AdminInventory: React.FC = () => {
         base = base.eq("category", categoryFilter);
       }
 
-      // For low/notlow we cannot do column-vs-column in PostgREST,
-      // so we fetch all matching rows, filter & paginate on the client.
+      // Client-side low/notlow filter
       if (lowStockFilter !== "all") {
         const { data, error } = await base.order("created_at", {
           ascending: false,
@@ -250,7 +252,6 @@ const AdminInventory: React.FC = () => {
           if (lowStockFilter === "low") {
             return hasLow && p.quantity <= (p.lowStockLevel as number);
           } else {
-            // "notlow": either no threshold or quantity above threshold
             return !hasLow || p.quantity > (p.lowStockLevel as number);
           }
         });
@@ -321,7 +322,7 @@ const AdminInventory: React.FC = () => {
       let lineQuery = supabase
         .from("InventoryMovementLine")
         .select(
-          `"InventoryMovementLine_id", product_id, product_name, product_category, product_packaging, type, reason, quantity, created_at, isDisplay`,
+          `"InventoryMovementLine_id", product_id, product_name, product_category, product_packaging, type, reason, quantity, product_unit_price, created_at, isDisplay`,
           { count: "exact" }
         )
         .eq("isDisplay", true)
@@ -337,18 +338,57 @@ const AdminInventory: React.FC = () => {
       const { data: lines, error: lineErr, count } = await lineQuery;
       if (lineErr) throw lineErr;
 
+      // Hydrate missing unit prices by looking up Products.price
+      const missingPriceIds = Array.from(
+        new Set(
+          (lines ?? [])
+            .filter(
+              (r: any) =>
+                r &&
+                (!Number.isFinite(Number(r.product_unit_price)) ||
+                  Number(r.product_unit_price) <= 0)
+            )
+            .map((r: any) => r.product_id)
+            .filter(Boolean)
+        )
+      ) as string[];
+
+      let priceById = new Map<string, number>();
+      if (missingPriceIds.length > 0) {
+        const { data: prodPriceRows, error: prodPriceErr } = await supabase
+          .from("Products")
+          .select("product_id, price")
+          .in("product_id", missingPriceIds);
+        if (prodPriceErr) throw prodPriceErr;
+        (prodPriceRows ?? []).forEach((p) =>
+          priceById.set(p.product_id, Number(p.price ?? 0))
+        );
+      }
+
       const mapped: MovementRow[] =
-        (lines ?? []).map((r: any) => ({
-          id: r.InventoryMovementLine_id,
-          productId: r.product_id,
-          productName: r.product_name ?? "—",
-          productCategory: r.product_category ?? null,
-          productPackaging: r.product_packaging ?? null,
-          movementType: r.type,
-          reason: r.reason,
-          quantity: Number(r.quantity),
-          createdAt: new Date(r.created_at).toISOString(),
-        })) ?? [];
+        (lines ?? []).map((r: any) => {
+          const unitFromRow =
+            r.product_unit_price != null
+              ? Number(r.product_unit_price)
+              : undefined;
+          const hydrated =
+            unitFromRow && Number.isFinite(unitFromRow) && unitFromRow > 0
+              ? unitFromRow
+              : priceById.get(r.product_id) ?? null;
+
+          return {
+            id: r.InventoryMovementLine_id,
+            productId: r.product_id,
+            productName: r.product_name ?? "—",
+            productCategory: r.product_category ?? null,
+            productPackaging: r.product_packaging ?? null,
+            movementType: r.type,
+            reason: r.reason,
+            quantity: Number(r.quantity),
+            createdAt: new Date(r.created_at).toISOString(),
+            productUnitPrice: hydrated,
+          };
+        }) ?? [];
 
       setMoveRowsTable(mapped);
       setMoveTotal(count ?? mapped.length);
@@ -398,6 +438,7 @@ const AdminInventory: React.FC = () => {
         initialQuantity: Number(values.initialQuantity),
         sellingPrice: Number(values.sellingPrice),
       });
+
       setOpenAdd(false);
       setValues(DEFAULT_VALUES);
       setPage(1);
@@ -413,7 +454,7 @@ const AdminInventory: React.FC = () => {
     try {
       const { data, error } = await supabase
         .from("Products")
-        .select("product_id, name, category, packaging, quantity")
+        .select("product_id, name, category, packaging, quantity, price")
         .order("name");
       if (error) throw error;
 
@@ -424,6 +465,7 @@ const AdminInventory: React.FC = () => {
           category: r.category ?? null,
           packaging: r.packaging ?? null,
           currentQty: Number(r.quantity ?? 0),
+          price: Number(r.price ?? 0),
         }))
       );
       setMoveRows([
@@ -483,10 +525,12 @@ const AdminInventory: React.FC = () => {
       const nameById = new Map<string, string>();
       const categoryById = new Map<string, string | null | undefined>();
       const packagingById = new Map<string, string | null | undefined>();
+      const priceById = new Map<string, number>();
       productOptions.forEach((p) => {
         nameById.set(p.id, p.name);
         categoryById.set(p.id, p.category);
         packagingById.set(p.id, p.packaging);
+        priceById.set(p.id, Number(p.price ?? 0));
       });
 
       const deltas = new Map<string, number>();
@@ -502,6 +546,7 @@ const AdminInventory: React.FC = () => {
 
       const affectedIds = Array.from(new Set(moveRows.map((r) => r.productId)));
 
+      // pre-check stock for deductions
       if (affectedIds.length > 0) {
         const { data: prodRows, error: qErr } = await supabase
           .from("Products")
@@ -534,6 +579,7 @@ const AdminInventory: React.FC = () => {
         }
       }
 
+      // insert movement lines with captured unit price
       const lines = moveRows.map((r) => ({
         product_id: r.productId,
         product_name: nameById.get(r.productId) ?? null,
@@ -543,6 +589,7 @@ const AdminInventory: React.FC = () => {
         reason: r.reason || null,
         quantity: Number(r.quantity),
         isDisplay: true,
+        product_unit_price: priceById.get(r.productId) ?? null,
       }));
 
       const { error: lineErr } = await supabase
@@ -550,6 +597,7 @@ const AdminInventory: React.FC = () => {
         .insert(lines);
       if (lineErr) throw lineErr;
 
+      // update Products.quantity
       if (affectedIds.length > 0) {
         const { data: prodRows2, error: qErr2 } = await supabase
           .from("Products")
@@ -592,54 +640,90 @@ const AdminInventory: React.FC = () => {
     }
   };
 
-  /* ---------------------- Delete a product ---------------------- */
+  /* ---------------------- SOFT delete a product (with movement guard) ---------------------- */
   const handleDelete = useCallback(
     async (id: string) => {
-      const yes = window.confirm("Delete this product? This cannot be undone.");
+      // 1) Check if there are any *visible* movement logs for this product
+      const { count, error: existsErr } = await supabase
+        .from("InventoryMovementLine")
+        .select("InventoryMovementLine_id", { count: "exact", head: true })
+        .eq("product_id", id)
+        .eq("isDisplay", true);
+
+      if (existsErr) {
+        alert(existsErr.message ?? "Failed to verify movement logs.");
+        return;
+      }
+
+      if ((count ?? 0) > 0) {
+        alert(
+          "This product has inventory movement logs. Please delete those movement entries first before hiding the product."
+        );
+        setActiveTab("movement");
+        return;
+      }
+
+      const yes = window.confirm(
+        "Hide this product from inventory? You can restore it later."
+      );
       if (!yes) return;
+
       try {
+        // 2) SOFT DELETE via isDisplay=false (your column name)
         const { error } = await supabase
           .from("Products")
-          .delete()
+          .update({ isDisplay: false })
           .eq("product_id", id);
         if (error) throw error;
+
         await fetchProducts();
         if (activeTab === "movement") await fetchMovements();
       } catch (e: any) {
-        alert(e.message ?? "Failed to delete product.");
+        alert(e.message ?? "Failed to hide product.");
       }
     },
     [fetchProducts, fetchMovements, activeTab]
   );
 
-  const categoryOptions = categories.map((c) => c.name); // strictly from ProductCategory table
+  const categoryOptions = categories.map((c) => c.name);
 
   return (
-    <main className="min-h-screen overflow-x-hidden  lg:ml-64">
+    <main className="min-h-screen overflow-x-hidden">
       <div className="mx-auto max-w-7xl p-6">
         <h1 className="text-3xl font-bold">Inventory Management</h1>
 
-        {/* Tabs */}
-        <div className="mt-5 flex items-center gap-3">
-          {["inventory", "movement"].map((tab) => (
-            <button
-              key={tab}
-              className={`rounded-full px-4 py-1 text-sm font-semibold transition-colors ${
-                activeTab === tab
-                  ? "bg-amber-400 text-white"
-                  : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-              }`}
-              onClick={() => setActiveTab(tab as "inventory" | "movement")}
-            >
-              {tab === "inventory" ? "Inventory" : "Stock Movement"}
-            </button>
-          ))}
+        {/* Tabs — modern pill style */}
+        <div className="mt-5 flex flex-wrap gap-2">
+          <button
+            onClick={() => setActiveTab("inventory")}
+            className={[
+              "relative rounded-full px-4 py-2 text-sm font-semibold transition",
+              "focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-300",
+              activeTab === "inventory"
+                ? "bg-amber-500 text-white shadow-[0_6px_20px_-8px_rgba(245,158,11,0.65)]"
+                : "bg-gray-100 text-gray-800 hover:bg-gray-200",
+            ].join(" ")}
+          >
+            Inventory
+          </button>
+          <button
+            onClick={() => setActiveTab("movement")}
+            className={[
+              "relative rounded-full px-4 py-2 text-sm font-semibold transition",
+              "focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-300",
+              activeTab === "movement"
+                ? "bg-amber-500 text-white shadow-[0_6px_20px_-8px_rgba(245,158,11,0.65)]"
+                : "bg-gray-100 text-gray-800 hover:bg-gray-200",
+            ].join(" ")}
+          >
+            Stock Movement
+          </button>
         </div>
 
         {/* Header + Actions */}
         <div className="mt-8 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
-            <h2 className="text-2xl font-bold">
+            <h2 className="text-2xl font-bold ">
               {activeTab === "inventory"
                 ? "Inventory Overview"
                 : "Stock Movements"}
@@ -655,7 +739,7 @@ const AdminInventory: React.FC = () => {
             {activeTab === "movement" ? (
               <button
                 type="button"
-                className="inline-flex items-center gap-2 rounded-xl bg-amber-400 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-500"
+                className="inline-flex items-center gap-2 rounded-xl border border-amber-300/60 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-800 shadow-sm hover:bg-amber-100 active:scale-[0.99] transition"
                 onClick={openMoveModal}
               >
                 <MoveRight className="h-4 w-4" />
@@ -664,7 +748,7 @@ const AdminInventory: React.FC = () => {
             ) : (
               <button
                 type="button"
-                className="inline-flex items-center gap-2 rounded-xl bg-amber-400 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-500"
+                className="inline-flex items-center gap-2 rounded-xl border border-amber-300/60 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-800 shadow-sm hover:bg-amber-100 active:scale-[0.99] transition"
                 onClick={() => setOpenAdd(true)}
               >
                 <PlusCircle className="h-4 w-4" />
@@ -696,7 +780,7 @@ const AdminInventory: React.FC = () => {
               loading={loading}
               currencyPrefix="₱"
               onEdited={fetchProducts}
-              categoryOptions={categoryOptions} // from ProductCategory table
+              categoryOptions={categoryOptions}
               categoryFilter={categoryFilter}
               onCategoryFilterChange={(v) => {
                 setCategoryFilter(v);
@@ -752,7 +836,7 @@ const AdminInventory: React.FC = () => {
         onQuickAddUom={() => setOpenUom(true)}
         values={values}
         errors={errors}
-        categoryOptions={categories.map((c) => c.name)} // same source
+        categoryOptions={categories.map((c) => c.name)}
         uomOptions={uoms.map((u) => ({ id: u.id, name: u.name }))}
         isSaving={isSaving}
         isLoadingUoms={isLoadingUoms}

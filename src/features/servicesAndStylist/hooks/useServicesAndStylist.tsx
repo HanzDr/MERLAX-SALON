@@ -1,13 +1,15 @@
 // hooks/useServicesAndStylists.ts
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseclient";
-import { type Service, type Stylist } from "../types/ServiceAndStylistTypes";
+import {
+  type Service,
+  type Stylist,
+  type DaySchedule,
+} from "../types/ServiceAndStylistTypes";
 import {
   type serviceSchemaData,
   type stylistSchemaData,
 } from "@/validation/ServicesAndStylistSchema";
-
-import { type DaySchedule } from "../types/ServiceAndStylistTypes";
 
 const DAYS = [
   "Monday",
@@ -23,20 +25,34 @@ const sortByDay = <T extends { day: string }>(rows: T[]) =>
     (a, b) => (dayOrder.get(a.day) ?? 0) - (dayOrder.get(b.day) ?? 0)
   );
 
+// Role type
+export type StylistRoleRow = {
+  stylistRole_id: string;
+  role_name: string | null;
+  created_at?: string;
+  display: boolean | null;
+};
+
 const useServicesAndStylists = () => {
   const [services, setServices] = useState<Service[]>([]);
   const [stylists, setStylists] = useState<Stylist[]>([]);
+  const [roles, setRoles] = useState<StylistRoleRow[]>([]);
+  // NEW: map of stylist_id -> array of service_ids
+  const [stylistServiceIdsByStylist, setStylistServiceIdsByStylist] = useState<
+    Record<string, string[]>
+  >({});
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  // Lightweight: Services + Stylists only
+  // Lightweight: Services + Stylists + Roles (+ StylistServices map)
   useEffect(() => {
     const fetchData = async () => {
       try {
         setLoading(true);
-        const [servicesRes, stylistsRes] = await Promise.all([
+        const [servicesRes, stylistsRes, rolesRes] = await Promise.all([
           supabase.from("Services").select("*").eq("display", true),
           supabase.from("Stylists").select("*").eq("display", true),
+          supabase.from("StylistRole").select("*").eq("display", true),
         ]);
 
         if (servicesRes.error) setError("Failed to fetch services");
@@ -44,7 +60,36 @@ const useServicesAndStylists = () => {
 
         if (stylistsRes.error) setError("Failed to fetch stylists");
         else setStylists(stylistsRes.data || []);
-      } catch {
+
+        if (rolesRes.error) setError("Failed to fetch roles");
+        else setRoles((rolesRes.data || []) as StylistRoleRow[]);
+
+        // After we know stylist IDs, fetch StylistServices and group by stylist_id
+        const stylistIds: string[] = (stylistsRes.data || []).map(
+          (s: any) => s.stylist_id
+        );
+        if (stylistIds.length) {
+          const { data: svcLinks, error: svcLinksErr } = await supabase
+            .from("StylistServices")
+            .select("stylist_id, service_id")
+            .in("stylist_id", stylistIds);
+
+          if (!svcLinksErr && svcLinks) {
+            const grouped: Record<string, string[]> = {};
+            for (const row of svcLinks as Array<{
+              stylist_id: string;
+              service_id: string;
+            }>) {
+              if (!grouped[row.stylist_id]) grouped[row.stylist_id] = [];
+              grouped[row.stylist_id].push(String(row.service_id));
+            }
+            setStylistServiceIdsByStylist(grouped);
+          }
+        } else {
+          setStylistServiceIdsByStylist({});
+        }
+      } catch (e) {
+        console.error(e);
         setError("Unexpected error while fetching data");
       } finally {
         setLoading(false);
@@ -144,9 +189,7 @@ const useServicesAndStylists = () => {
       .from("Services")
       .update({ display: false })
       .eq("service_id", serviceId);
-
     if (error) return false;
-
     setServices((prev) =>
       prev
         .map((s) => (s.service_id === serviceId ? { ...s, display: false } : s))
@@ -155,8 +198,54 @@ const useServicesAndStylists = () => {
     return true;
   };
 
+  // ——— Role ops ———
+  const addRole = async (name: string) => {
+    const trimmed = name.trim();
+    if (!trimmed) return { success: false, message: "Role name is required." };
+
+    const { data, error } = await supabase
+      .from("StylistRole")
+      .insert({ role_name: trimmed, display: true })
+      .select("*")
+      .single();
+
+    if (error || !data) {
+      console.error(error);
+      return { success: false, message: "Failed to create role." };
+    }
+    setRoles((prev) => [...prev, data as StylistRoleRow]);
+    return { success: true, role: data as StylistRoleRow };
+  };
+
+  const deleteRole = async (roleId: string) => {
+    const { error } = await supabase
+      .from("StylistRole")
+      .update({ display: false })
+      .eq("stylistRole_id", roleId);
+
+    if (error) {
+      console.error(error);
+      return { success: false, message: "Failed to delete role." };
+    }
+    setRoles((prev) => prev.filter((r) => r.stylistRole_id !== roleId));
+    return { success: true };
+  };
+
+  const reloadRoles = async () => {
+    const { data, error } = await supabase
+      .from("StylistRole")
+      .select("*")
+      .eq("display", true)
+      .order("role_name", { ascending: true });
+
+    if (error) {
+      console.error(error);
+      return;
+    }
+    setRoles((data || []) as StylistRoleRow[]);
+  };
+
   // ——— Stylist ops ———
-  // Return the created row so component can use the real ID safely
   const handleAddStylist = async (
     formData: stylistSchemaData,
     reset: () => void
@@ -210,9 +299,13 @@ const useServicesAndStylists = () => {
         console.error("Error inserting services:", serviceError);
         return { success: false, message: "Failed to add services" };
       }
+      // keep the map in sync for the new stylist
+      setStylistServiceIdsByStylist((prev) => ({
+        ...prev,
+        [stylistId]: [...(prev[stylistId] ?? []), ...formData.services!],
+      }));
     }
 
-    // keep main list in sync
     setStylists((prev) => [...prev, stylistData as Stylist]);
     reset();
 
@@ -224,12 +317,17 @@ const useServicesAndStylists = () => {
       .from("Stylists")
       .update({ display: false })
       .eq("stylist_id", id);
-
     if (error) {
       console.error("Failed to soft-delete stylist:", error);
       throw error;
     }
     setStylists((prev) => prev.filter((s) => s.stylist_id !== id));
+    // also clean map
+    setStylistServiceIdsByStylist((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
   };
 
   const handleUpdateStylist = async (
@@ -241,7 +339,7 @@ const useServicesAndStylists = () => {
     | { success: false; message: string }
   > => {
     try {
-      // 0) Normalize incoming values to KNOWN service IDs
+      // normalize to service IDs
       const serviceNameToId = new Map<string, string>();
       const validServiceIds = new Set<string>();
       services.forEach((s: any) => {
@@ -252,13 +350,13 @@ const useServicesAndStylists = () => {
       const nextIds: string[] = (updateForm.services ?? [])
         .map((v) => {
           const raw = String(v).trim();
-          if (validServiceIds.has(raw)) return raw; // already an ID
-          const byName = serviceNameToId.get(raw); // maybe it's a name
+          if (validServiceIds.has(raw)) return raw;
+          const byName = serviceNameToId.get(raw);
           return byName ?? raw;
         })
-        .filter((id) => validServiceIds.has(id)); // keep only valid IDs
+        .filter((id) => validServiceIds.has(id));
 
-      // 1) Update basic info
+      // 1) basic info
       const { error: stylistErr } = await supabase
         .from("Stylists")
         .update({
@@ -270,7 +368,7 @@ const useServicesAndStylists = () => {
         .eq("stylist_id", stylistId);
       if (stylistErr) throw stylistErr;
 
-      // 2) Replace schedules (delete all -> insert)
+      // 2) schedules
       const { error: delSchedErr } = await supabase
         .from("StylistSchedules")
         .delete()
@@ -281,7 +379,7 @@ const useServicesAndStylists = () => {
         const scheduleRows = updateForm.schedule.map((s) => ({
           stylist_id: stylistId,
           day_of_week: s.day,
-          start_time: s.start_time, // "HH:MM"
+          start_time: s.start_time,
           end_time: s.end_time,
         }));
         const { error: insSchedErr } = await supabase
@@ -290,8 +388,7 @@ const useServicesAndStylists = () => {
         if (insSchedErr) throw insSchedErr;
       }
 
-      // 3) Replace services (delete ALL for stylist, then insert nextIds)
-      //    This avoids edge cases with filters not matching.
+      // 3) services replace
       const { error: delAllSvcErr } = await supabase
         .from("StylistServices")
         .delete()
@@ -310,7 +407,7 @@ const useServicesAndStylists = () => {
         if (insSvcErr) throw insSvcErr;
       }
 
-      // 4) reflect basic info locally
+      // reflect locally
       setStylists((prev) =>
         prev.map((s) =>
           s.stylist_id === stylistId
@@ -324,6 +421,10 @@ const useServicesAndStylists = () => {
             : s
         )
       );
+      setStylistServiceIdsByStylist((prev) => ({
+        ...prev,
+        [stylistId]: nextIds,
+      }));
 
       reset();
       return { success: true, serviceIds: nextIds };
@@ -336,6 +437,8 @@ const useServicesAndStylists = () => {
   return {
     services,
     stylists,
+    roles,
+    stylistServiceIdsByStylist, // NEW: expose the map
     loading,
     error,
     // service ops
@@ -346,6 +449,10 @@ const useServicesAndStylists = () => {
     handleAddStylist,
     handleDeleteStylist,
     handleUpdateStylist,
+    // role ops
+    addRole,
+    deleteRole,
+    reloadRoles,
     // details
     getStylistDetail,
   };

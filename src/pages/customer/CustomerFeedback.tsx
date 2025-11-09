@@ -288,13 +288,14 @@ const CustomerFeedback: React.FC = () => {
     try {
       setSubmitting(true);
 
-      // Update only if not yet answered (backend guard)
       const { data, error } = await supabase
         .from("Feedback")
         .update({
           rating: payload.rating,
           customer_response: payload.comment || null,
           customer_response_date: new Date().toISOString(),
+          // ✅ flip the boolean flag
+          customerHasResponded: Boolean((payload.comment || "").trim()),
         })
         .eq("feedback_id", selectedFeedbackId)
         .is("customer_response", null)
@@ -302,12 +303,11 @@ const CustomerFeedback: React.FC = () => {
         .maybeSingle();
 
       if (error) throw error;
-
       if (!data) {
         alert("This feedback was already submitted. Showing the latest state.");
       }
 
-      // Keep the row but mark as responded so the button disables
+      // Optimistic UI — also reflect the flag locally
       setRows((prev) =>
         prev.map((r) =>
           r.feedback_id === selectedFeedbackId

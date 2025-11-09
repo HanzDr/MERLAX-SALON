@@ -1,4 +1,3 @@
-// features/feedback/components/ui/feedback-card.tsx
 import { RiDeleteBin6Line } from "react-icons/ri";
 import { StarRating } from "../../utils/helper-methods";
 import type {
@@ -51,7 +50,8 @@ const FeedbackCard = ({
   onDelete,
 }: FeedbackCardProps) => {
   const displayDate = formatDate(date);
-  const respondLabel = adminResponded ? "View response" : "Respond";
+  // If admin has responded already, label becomes "View"
+  const respondLabel = adminResponded ? "View" : "Respond";
 
   // In case category can be null in your data, guard the badge rendering
   const hasCategory = Boolean(category);
@@ -75,7 +75,6 @@ const FeedbackCard = ({
 
         {hasCategory && (
           <div className="mt-4">
-            {/* TypeScript narrows here since hasCategory ensures category is truthy */}
             <span
               className={`inline-flex items-center rounded-full border px-3 py-1 text-sm font-semibold ${
                 badgeClasses[category as FeedbackCategory]

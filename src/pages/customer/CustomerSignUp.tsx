@@ -5,9 +5,20 @@ import customerLoginBg from "@/assets/customerLoginBg.png";
 import { FaEye, FaEyeSlash } from "react-icons/fa";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-// Added a comment
 import { type signUpFormData, signUpSchema } from "@/validation/AuthSchema";
 import { useAuthContext } from "@/features/auth/context/AuthContext";
+
+console.log("SUPABASE_URL =", import.meta.env.VITE_SUPABASE_URL);
+
+const inputBase =
+  "w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm " +
+  "outline-none ring-0 transition placeholder:text-gray-400 " +
+  "focus:border-[#FFB030] focus:ring-2 focus:ring-[#FFB030]/30 " +
+  "disabled:opacity-50 disabled:cursor-not-allowed";
+
+const labelBase = "block text-xs font-medium text-gray-700 mb-1";
+
+const errorText = "text-red-500 text-xs mt-1";
 
 const CustomerSignUp = () => {
   const [showPassword, setShowPassword] = useState(false);
@@ -16,11 +27,12 @@ const CustomerSignUp = () => {
   const {
     register,
     handleSubmit,
-    formState: { errors },
+    formState: { errors, isSubmitting },
     reset,
     setError,
   } = useForm<signUpFormData>({
     resolver: zodResolver(signUpSchema),
+    mode: "onBlur",
   });
 
   const { handleSignUp } = useAuthContext();
@@ -44,216 +56,250 @@ const CustomerSignUp = () => {
   };
 
   return (
-    <div className="h-screen flex flex-col md:flex-row overflow-hidden">
+    <div className="min-h-screen grid md:grid-cols-2 bg-white">
       {/* Left: Form */}
-      <div className="w-full md:w-1/2 flex items-center justify-center bg-white overflow-y-auto p-4">
-        <form
-          onSubmit={handleSubmit(onSubmit)}
-          noValidate
-          className="w-full max-w-sm space-y-3"
-        >
-          <div className="text-center mb-2">
-            <h1 className="text-2xl font-bold text-[#FFB030] font-newsreader">
-              MERLAX
+      <div className="flex items-center justify-center p-6 sm:p-10">
+        <div className="w-full max-w-md">
+          {/* Brand */}
+          <div className="mb-6 text-center">
+            <h1 className="text-4xl font-bold tracking-tight">
+              <span className="bg-gradient-to-r from-[#FFB030] to-[#FFCC6A] bg-clip-text text-transparent">
+                MERLAX
+              </span>
             </h1>
-            <p className="text-gray-600 text-sm">Customer Sign Up</p>
-          </div>
-
-          {formError && (
-            <p className="text-red-600 text-xs text-center font-medium">
-              {formError}
+            <p className="text-gray-500 text-sm">
+              Create your customer account
             </p>
-          )}
-
-          {/* First Name */}
-          <div>
-            <label
-              htmlFor="firstName"
-              className="block text-xs font-medium mb-1"
-            >
-              First Name
-            </label>
-            <input
-              {...register("firstName")}
-              type="text"
-              id="firstName"
-              className="w-full border border-gray-300 rounded px-2 py-1 text-xs"
-            />
-            {errors.firstName && (
-              <p className="text-red-500 text-xs mt-0.5">
-                {errors.firstName.message}
-              </p>
-            )}
           </div>
 
-          {/* Middle Name */}
-          <div>
-            <label
-              htmlFor="middleName"
-              className="block text-xs font-medium mb-1"
-            >
-              Middle Name
-            </label>
-            <input
-              {...register("middleName")}
-              type="text"
-              id="middleName"
-              className="w-full border border-gray-300 rounded px-2 py-1 text-xs"
-            />
-            {errors.middleName && (
-              <p className="text-red-500 text-xs mt-0.5">
-                {errors.middleName.message}
-              </p>
-            )}
-          </div>
-
-          {/* Last Name */}
-          <div>
-            <label
-              htmlFor="lastName"
-              className="block text-xs font-medium mb-1"
-            >
-              Last Name
-            </label>
-            <input
-              {...register("lastName")}
-              type="text"
-              id="lastName"
-              className="w-full border border-gray-300 rounded px-2 py-1 text-xs"
-            />
-            {errors.lastName && (
-              <p className="text-red-500 text-xs mt-0.5">
-                {errors.lastName.message}
-              </p>
-            )}
-          </div>
-
-          {/* Birthdate */}
-          <div>
-            <label
-              htmlFor="birthdate"
-              className="block text-xs font-medium mb-1"
-            >
-              Birthdate
-            </label>
-            <input
-              {...register("birthdate")}
-              type="date"
-              id="birthdate"
-              max={today}
-              className="w-full border border-gray-300 rounded px-2 py-1 text-xs"
-            />
-            {errors.birthdate && (
-              <p className="text-red-500 text-xs mt-0.5">
-                {errors.birthdate.message}
-              </p>
-            )}
-          </div>
-
-          {/* Phone Number */}
-          <div>
-            <label
-              htmlFor="phoneNumber"
-              className="block text-xs font-medium mb-1"
-            >
-              Phone Number
-            </label>
-            <input
-              {...register("phoneNumber")}
-              type="tel"
-              id="phoneNumber"
-              className="w-full border border-gray-300 rounded px-2 py-1 text-xs"
-            />
-            {errors.phoneNumber && (
-              <p className="text-red-500 text-xs mt-0.5">
-                {errors.phoneNumber.message}
-              </p>
-            )}
-          </div>
-
-          {/* Email */}
-          <div>
-            <label htmlFor="email" className="block text-xs font-medium mb-1">
-              Email
-            </label>
-            <input
-              {...register("email")}
-              type="email"
-              id="email"
-              className="w-full border border-gray-300 rounded px-2 py-1 text-xs"
-            />
-            {errors.email && (
-              <p className="text-red-500 text-xs mt-0.5">
-                {errors.email.message}
-              </p>
-            )}
-          </div>
-
-          {/* Password */}
-          <div>
-            <label
-              htmlFor="password"
-              className="block text-xs font-medium mb-1"
-            >
-              Password
-            </label>
-            <div className="relative">
-              <input
-                type={showPassword ? "text" : "password"}
-                {...register("password")}
-                className="w-full border border-gray-300 rounded px-2 py-1 text-xs pr-10 appearance-none"
-              />
-              <div
-                className="absolute right-2 top-1/2 transform -translate-y-1/2 text-gray-600 cursor-pointer"
-                onClick={() => setShowPassword((prev) => !prev)}
-              >
-                {showPassword ? <FaEyeSlash /> : <FaEye />}
+          {/* Card */}
+          <div className="rounded-2xl border border-gray-100 shadow-sm p-5 sm:p-6">
+            {formError && (
+              <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                {formError}
               </div>
-            </div>
-            {errors.password && (
-              <p className="text-red-500 text-xs mt-0.5">
-                {errors.password.message}
-              </p>
             )}
-          </div>
 
-          {/* Confirm Password */}
-          <div>
-            <label
-              htmlFor="confirmPassword"
-              className="block text-xs font-medium mb-1"
+            <form
+              onSubmit={handleSubmit(onSubmit)}
+              noValidate
+              className="space-y-4"
             >
-              Confirm Password
-            </label>
-            <input
-              {...register("confirmedPassword")}
-              type="password"
-              id="confirmPassword"
-              className="w-full border border-gray-300 rounded px-2 py-1 text-xs"
-            />
-            {errors.confirmedPassword && (
-              <p className="text-red-500 text-xs mt-0.5">
-                {errors.confirmedPassword.message}
-              </p>
-            )}
-          </div>
+              {/* Name group */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label htmlFor="firstName" className={labelBase}>
+                    First Name
+                  </label>
+                  <input
+                    {...register("firstName")}
+                    type="text"
+                    id="firstName"
+                    className={inputBase}
+                    autoComplete="given-name"
+                    aria-invalid={!!errors.firstName}
+                  />
+                  {errors.firstName && (
+                    <p className={errorText}>{errors.firstName.message}</p>
+                  )}
+                </div>
 
-          <button
-            type="submit"
-            className="w-full bg-[#FFB030] hover:bg-[#e09d29] text-white font-semibold py-1.5 rounded text-xs"
-          >
-            Join the Style Club
-          </button>
-        </form>
+                <div>
+                  <label htmlFor="middleName" className={labelBase}>
+                    Middle Name
+                  </label>
+                  <input
+                    {...register("middleName")}
+                    type="text"
+                    id="middleName"
+                    className={inputBase}
+                    autoComplete="additional-name"
+                    aria-invalid={!!errors.middleName}
+                  />
+                  {errors.middleName && (
+                    <p className={errorText}>{errors.middleName.message}</p>
+                  )}
+                </div>
+
+                <div>
+                  <label htmlFor="lastName" className={labelBase}>
+                    Last Name
+                  </label>
+                  <input
+                    {...register("lastName")}
+                    type="text"
+                    id="lastName"
+                    className={inputBase}
+                    autoComplete="family-name"
+                    aria-invalid={!!errors.lastName}
+                  />
+                  {errors.lastName && (
+                    <p className={errorText}>{errors.lastName.message}</p>
+                  )}
+                </div>
+              </div>
+
+              {/* Birthdate */}
+              <div>
+                <label htmlFor="birthdate" className={labelBase}>
+                  Birthdate
+                </label>
+                <input
+                  {...register("birthdate")}
+                  type="date"
+                  id="birthdate"
+                  max={today}
+                  className={inputBase}
+                  aria-invalid={!!errors.birthdate}
+                />
+                {errors.birthdate && (
+                  <p className={errorText}>{errors.birthdate.message}</p>
+                )}
+              </div>
+
+              {/* Phone + Email */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label htmlFor="phoneNumber" className={labelBase}>
+                    Phone Number
+                  </label>
+                  <input
+                    {...register("phoneNumber")}
+                    type="tel"
+                    id="phoneNumber"
+                    inputMode="tel"
+                    placeholder="09xx xxx xxxx"
+                    className={inputBase}
+                    autoComplete="tel"
+                    aria-invalid={!!errors.phoneNumber}
+                  />
+                  {errors.phoneNumber && (
+                    <p className={errorText}>{errors.phoneNumber.message}</p>
+                  )}
+                </div>
+
+                <div>
+                  <label htmlFor="email" className={labelBase}>
+                    Email
+                  </label>
+                  <input
+                    {...register("email")}
+                    type="email"
+                    id="email"
+                    className={inputBase}
+                    autoComplete="email"
+                    aria-invalid={!!errors.email}
+                  />
+                  {errors.email && (
+                    <p className={errorText}>{errors.email.message}</p>
+                  )}
+                </div>
+              </div>
+
+              {/* Password */}
+              <div>
+                <label htmlFor="password" className={labelBase}>
+                  Password
+                </label>
+                <div className="relative">
+                  <input
+                    type={showPassword ? "text" : "password"}
+                    {...register("password")}
+                    id="password"
+                    className={`${inputBase} pr-10`}
+                    autoComplete="new-password"
+                    aria-invalid={!!errors.password}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((p) => !p)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 inline-flex items-center justify-center rounded-md p-1 text-gray-500 hover:text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#FFB030]/40"
+                    aria-label={
+                      showPassword ? "Hide password" : "Show password"
+                    }
+                    title={showPassword ? "Hide password" : "Show password"}
+                  >
+                    {showPassword ? <FaEyeSlash /> : <FaEye />}
+                  </button>
+                </div>
+                {errors.password && (
+                  <p className={errorText}>{errors.password.message}</p>
+                )}
+              </div>
+
+              {/* Confirm Password */}
+              <div>
+                <label htmlFor="confirmPassword" className={labelBase}>
+                  Confirm Password
+                </label>
+                <input
+                  {...register("confirmedPassword")}
+                  type="password"
+                  id="confirmPassword"
+                  className={inputBase}
+                  autoComplete="new-password"
+                  aria-invalid={!!errors.confirmedPassword}
+                />
+                {errors.confirmedPassword && (
+                  <p className={errorText}>
+                    {errors.confirmedPassword.message}
+                  </p>
+                )}
+              </div>
+
+              {/* Submit */}
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="w-full rounded-lg bg-[#FFB030] px-4 py-2 text-sm font-semibold text-white transition 
+                           hover:bg-[#EFA53A] focus:outline-none focus:ring-2 focus:ring-[#FFB030]/40
+                           disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {isSubmitting
+                  ? "Creating your account…"
+                  : "Join the Style Club"}
+              </button>
+
+              {/* Tiny footnote */}
+              <p className="text-[11px] text-gray-500 text-center">
+                By continuing, you agree to our{" "}
+                <a
+                  className="underline decoration-dotted hover:text-gray-700"
+                  href="#"
+                >
+                  Terms
+                </a>{" "}
+                and{" "}
+                <a
+                  className="underline decoration-dotted hover:text-gray-700"
+                  href="#"
+                >
+                  Privacy Policy
+                </a>
+                .
+              </p>
+            </form>
+          </div>
+        </div>
       </div>
 
-      {/* Right: Image */}
-      <div className="hidden md:block md:w-1/2">
+      {/* Right: Visual panel */}
+      <div className="hidden md:block relative">
         <img
           src={customerLoginBg}
           alt="Sign up visual"
-          className="object-cover w-full h-full"
+          className="absolute inset-0 h-full w-full object-cover"
         />
+        {/* Soft overlay + brand tag */}
+        <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-black/20 to-black/40" />
+        <div className="absolute bottom-6 left-6 right-6">
+          <div className="inline-flex items-center gap-2 rounded-full border border-white/30 bg-white/10 px-3 py-1.5 backdrop-blur text-white">
+            <span className="h-2 w-2 rounded-full bg-[#FFB030]" />
+            <span className="text-xs tracking-wide">
+              Customer Experience, Elevated
+            </span>
+          </div>
+        </div>
       </div>
     </div>
   );

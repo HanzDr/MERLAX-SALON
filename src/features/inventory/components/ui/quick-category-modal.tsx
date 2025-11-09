@@ -17,7 +17,7 @@ export type QuickCategoryModalProps = {
 };
 
 const fieldBase =
-  "w-full rounded-lg border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-black/10";
+  "w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm outline-none focus:border-zinc-300 focus:ring-2 focus:ring-amber-200";
 
 const QuickCategoryModal: React.FC<QuickCategoryModalProps> = ({
   open,
@@ -34,85 +34,97 @@ const QuickCategoryModal: React.FC<QuickCategoryModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-[120] flex items-center justify-center"
+      className="fixed inset-0 z-[120] grid place-items-center"
       role="dialog"
       aria-modal="true"
       aria-labelledby="quick-category-title"
     >
       {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+      <div
+        className="absolute inset-0 bg-zinc-900/50 backdrop-blur-sm"
+        onClick={onClose}
+      />
 
-      {/* Modal */}
-      <div className="relative z-[121] w-[92%] max-w-xl rounded-2xl bg-white p-6 shadow-2xl">
-        <div className="mb-4 flex items-center justify-between">
-          <h2 id="quick-category-title" className="text-xl font-bold">
+      {/* Modal Card */}
+      <div className="relative z-[121] w-[92%] max-w-xl overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-xl">
+        {/* Header (sticky) */}
+        <div className="sticky top-0 flex items-center justify-between border-b bg-white/80 p-5 backdrop-blur supports-[backdrop-filter]:bg-white/60">
+          <h2 id="quick-category-title" className="text-xl font-semibold">
             Manage Categories
           </h2>
           <button
             type="button"
             onClick={onClose}
-            className="rounded-full p-1 hover:bg-gray-100"
+            className="rounded-full p-1 hover:bg-zinc-100"
+            aria-label="Close"
           >
-            <X className="h-5 w-5 text-gray-500" />
+            <X className="h-5 w-5 text-zinc-600" />
           </button>
         </div>
 
-        {/* Add new */}
-        <div className="mb-4 flex gap-2">
-          <input
-            className={fieldBase}
-            placeholder="New category name"
-            value={newName}
-            onChange={(e) => onNewNameChange(e.target.value)}
-            disabled={isMutating}
-          />
-          <button
-            type="button"
-            className="inline-flex items-center gap-2 rounded-xl bg-amber-400 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-500 disabled:opacity-60"
-            onClick={onAdd}
-            disabled={isMutating || !newName.trim()}
-          >
-            <Plus className="h-4 w-4" /> Add
-          </button>
-        </div>
+        {/* Body */}
+        <div className="p-5">
+          {/* Add new */}
+          <div className="mb-4 flex gap-2">
+            <input
+              className={fieldBase}
+              placeholder="New category name"
+              value={newName}
+              onChange={(e) => onNewNameChange(e.target.value)}
+              disabled={isMutating}
+            />
+            <button
+              type="button"
+              className="inline-flex items-center gap-2 rounded-xl bg-amber-400 px-4 py-2 text-sm font-semibold text-black shadow-sm hover:bg-amber-500 disabled:opacity-60 active:scale-[0.99]"
+              onClick={onAdd}
+              disabled={isMutating || !newName.trim()}
+            >
+              <Plus className="h-4 w-4" />
+              Add
+            </button>
+          </div>
 
-        {/* List */}
-        <div className="max-h-[320px] overflow-y-auto rounded-xl border">
-          {isLoading ? (
-            <div className="p-4 text-center text-sm text-gray-500">
-              Loading…
-            </div>
-          ) : categories.length === 0 ? (
-            <div className="p-6 text-center text-gray-500">
-              No categories yet.
-            </div>
-          ) : (
-            <ul className="divide-y">
-              {categories.map((c) => (
-                <li
-                  key={c.id}
-                  className="flex items-center justify-between p-3"
-                >
-                  <span className="font-medium text-gray-800">{c.name}</span>
-                  <button
-                    className="p-2 text-rose-600 hover:text-rose-700"
-                    onClick={() => onDelete(c.id)}
-                    aria-label={`Delete ${c.name}`}
-                    disabled={isMutating}
+          {/* List */}
+          <div className="max-h-[320px] overflow-y-auto rounded-xl border border-zinc-200">
+            {isLoading ? (
+              <div className="p-4 text-center text-sm text-zinc-500">
+                Loading…
+              </div>
+            ) : categories.length === 0 ? (
+              <div className="p-6 text-center text-zinc-500">
+                No categories yet.
+              </div>
+            ) : (
+              <ul className="divide-y divide-zinc-100">
+                {categories.map((c) => (
+                  <li
+                    key={c.id}
+                    className="flex items-center justify-between p-3 transition-colors hover:bg-amber-50/40"
                   >
-                    <Trash2 className="h-5 w-5" />
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
+                    <span className="font-medium text-zinc-900">{c.name}</span>
+                    <button
+                      className="rounded-lg border border-rose-200 px-2.5 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-50 active:scale-[0.99] disabled:opacity-60"
+                      onClick={() => onDelete(c.id)}
+                      aria-label={`Delete ${c.name}`}
+                      disabled={isMutating}
+                    >
+                      <span className="inline-flex items-center gap-1.5">
+                        <Trash2 className="h-4 w-4" />
+                        Delete
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         </div>
 
         {/* Footer */}
-        <div className="mt-4 flex justify-end">
+        <div className="flex items-center justify-end gap-3 border-t bg-white/60 p-5">
           <button
             type="button"
-            className="rounded-xl bg-black px-5 py-2 text-sm font-semibold text-white hover:opacity-90"
+            className="rounded-xl bg-zinc-100 px-5 py-2 text-sm font-semibold text-zinc-800 ring-1 ring-inset ring-zinc-200 hover:bg-zinc-200 active:scale-[0.99]"
             onClick={onClose}
             disabled={isMutating}
           >

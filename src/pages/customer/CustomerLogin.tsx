@@ -39,10 +39,14 @@ const CustomerLogin = () => {
           onSubmit={handleSubmit(onSubmit)}
           className="w-full max-w-xs sm:max-w-sm bg-white p-6 sm:p-8 space-y-6"
         >
-          <h1 className="text-3xl sm:text-4xl font-bold text-[#FFB030] text-center font-newsreader">
-            MERLAX
-          </h1>
-          <p className="text-center text-gray-600">Customer Login</p>
+          <div className="mb-6 text-center">
+            <h1 className="text-4xl font-bold tracking-tight">
+              <span className="bg-gradient-to-r from-[#FFB030] to-[#FFCC6A] bg-clip-text text-transparent">
+                MERLAX
+              </span>
+            </h1>
+            <p className="text-gray-500 text-sm">Log in</p>
+          </div>
 
           {/* Global Auth Error */}
           {authError && (
@@ -98,7 +102,7 @@ const CustomerLogin = () => {
 
           {/* Forgot Password Link */}
           <div className="text-left">
-            <Link to="/customer/resetPassword">
+            <Link to="/reset-password">
               <p className="text-sm text-blue-500 hover:underline">
                 Forgot Password?
               </p>

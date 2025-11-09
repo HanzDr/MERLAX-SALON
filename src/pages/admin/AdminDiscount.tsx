@@ -4,6 +4,7 @@ import { Pencil, Plus, Trash2, X } from "lucide-react";
 import { useForm, useController } from "react-hook-form";
 import { useServicesAndStylistContext } from "@/features/servicesAndStylist/contexts/ServicesAndStylistContext";
 import { usePromoManagementContext } from "@/features/promo-management/context/promoManagementContext";
+import { supabase } from "@/lib/supabaseclient";
 
 /* ------------------------------- Types ---------------------------------- */
 
@@ -14,11 +15,11 @@ type DiscountRow = {
   id: string;
   name: string;
   type: DiscountType;
-  value: number; // Fixed: PHP; Percentage: %
+  value: number;
   applies_to: AppliesTo;
-  included_services: string[]; // item IDs (services OR packages)
-  discounted_min?: number | null; // computed, UI only
-  discounted_max?: number | null; // computed, UI only
+  included_services: string[];
+  discounted_min?: number | null;
+  discounted_max?: number | null;
   start_date?: string | null;
   end_date?: string | null;
   uses?: number | null;
@@ -30,8 +31,8 @@ type DiscountFormData = {
   type: DiscountType;
   value: number;
   applies_to: AppliesTo;
-  included_services: string[]; // item IDs (services OR packages)
-  discounted?: number | null; // UI only, not saved
+  included_services: string[];
+  discounted?: number | null;
   start_date?: Date | null;
   end_date?: Date | null;
   uses?: number | null;
@@ -58,6 +59,7 @@ const peso = (n: number) =>
 const humanDate = (d?: string | Date | null) => {
   if (!d) return "";
   const date = new Date(typeof d === "string" ? d : d.toISOString());
+  if (Number.isNaN(date.getTime())) return "";
   const m = [
     "Jan",
     "Feb",
@@ -75,7 +77,7 @@ const humanDate = (d?: string | Date | null) => {
   return `${m} ${date.getDate()} ${date.getFullYear()}`;
 };
 
-// Local YYYY-MM-DD (no timezone offset surprises)
+// Local YYYY-MM-DD
 const toLocalISODate = (date: Date) => {
   const y = date.getFullYear();
   const m = String(date.getMonth() + 1).padStart(2, "0");
@@ -108,20 +110,25 @@ function ConfirmModal({
   const overlayRef = useRef<HTMLDivElement>(null);
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-[999] grid place-items-center p-4">
       <div
         ref={overlayRef}
-        className="absolute inset-0 bg-black/40"
+        className="absolute inset-0 bg-zinc-900/50 backdrop-blur-sm"
         onClick={(e) => {
           if (e.target === overlayRef.current) onCancel();
         }}
+        aria-hidden
       />
-      <div className="relative w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
-        <h3 className="mb-2 text-xl font-semibold">{title}</h3>
-        <p className="mb-6 text-sm text-gray-600">{message}</p>
+      <div
+        role="dialog"
+        aria-modal="true"
+        className="relative w-full max-w-md overflow-hidden rounded-2xl border border-white/20 bg-white/90 p-6 shadow-2xl backdrop-blur-xl"
+      >
+        <h3 className="mb-2 text-xl font-bold text-zinc-900">{title}</h3>
+        <p className="mb-6 text-sm text-zinc-600">{message}</p>
         <div className="flex justify-end gap-3">
           <button
-            className="rounded-lg bg-gray-100 px-4 py-2 text-sm font-medium hover:bg-gray-200"
+            className="rounded-xl border border-zinc-300 bg-white px-4 py-2 text-sm font-semibold text-zinc-800 hover:bg-zinc-50"
             onClick={onCancel}
             disabled={loading}
           >
@@ -130,7 +137,7 @@ function ConfirmModal({
           <button
             onClick={onConfirm}
             disabled={loading}
-            className="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white shadow hover:bg-red-700 disabled:opacity-60"
+            className="rounded-xl bg-rose-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-rose-700 disabled:opacity-60"
           >
             {loading ? "Processing…" : confirmText}
           </button>
@@ -149,8 +156,8 @@ function DiscountModal({
   mode,
   onClose,
   onSave,
-  serviceItems, // normalized services [{id,name,min_price,max_price}]
-  packageItems, // normalized packages [{id,name,price}]
+  serviceItems,
+  packageItems,
   initialValues,
 }: {
   open: boolean;
@@ -186,14 +193,12 @@ function DiscountModal({
     },
   });
 
-  // included_services controlled array
   const { field: includedField } = useController({
     name: "included_services",
     control,
     defaultValue: [],
   });
 
-  // Prefill on open for edit / reset on add
   useEffect(() => {
     if (!open) return;
     if (mode === "edit" && initialValues) {
@@ -232,7 +237,6 @@ function DiscountModal({
     }
   }, [open, mode, initialValues, reset]);
 
-  // ESC to close
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
@@ -240,7 +244,6 @@ function DiscountModal({
     return () => window.removeEventListener("keydown", onKey);
   }, [open, onClose]);
 
-  // Switch item source by applies_to (no auto-clear here; we clear on user change)
   const appliesTo = watch("applies_to");
   const isService = appliesTo === "Service";
   const currentItems = isService ? serviceItems : packageItems;
@@ -249,7 +252,6 @@ function DiscountModal({
   const type = watch("type");
   const value = watch("value") as number | undefined;
 
-  // Subtotals
   const { subtotalMin, subtotalMax } = useMemo(() => {
     if (!currentItems?.length || !selectedIds?.length) {
       return { subtotalMin: 0, subtotalMax: 0 };
@@ -282,7 +284,6 @@ function DiscountModal({
     }
   }, [currentItems, selectedIds, isService]);
 
-  // Compute discounted total(s) (read-only)
   const { discountedMin, discountedMax } = useMemo(() => {
     if (!value || value < 0)
       return { discountedMin: subtotalMin, discountedMax: subtotalMax };
@@ -294,28 +295,22 @@ function DiscountModal({
         discountedMax: Math.max(subtotalMax * factor, 0),
       };
     }
-    // Fixed PHP off — subtract same amount across the range
     return {
       discountedMin: Math.max(subtotalMin - value, 0),
       discountedMax: Math.max(subtotalMax - value, 0),
     };
   }, [subtotalMin, subtotalMax, type, value]);
 
-  // For end date min (>= start date or today)
   const startDateVal = watch("start_date") as Date | undefined;
   const dynamicEndMinISO = startDateVal
     ? toLocalISODate(startDateVal)
     : todayISO;
 
-  // register for applies_to, but clear included items only when the USER toggles it
   const appliesToReg = register("applies_to");
 
   const submit = async (data: DiscountFormData) => {
     const deduped = Array.from(new Set(selectedIds));
-    const ok = await onSave({
-      ...data,
-      included_services: deduped,
-    });
+    const ok = await onSave({ ...data, included_services: deduped });
     if (ok) onClose();
   };
 
@@ -323,188 +318,233 @@ function DiscountModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center p-4 md:items-center"
+      className="fixed inset-0 z-[998] grid place-items-center p-4"
       aria-modal
       role="dialog"
     >
       <div
         ref={overlayRef}
-        className="absolute inset-0 bg-black/40"
+        className="absolute inset-0 bg-zinc-900/50 backdrop-blur-sm"
         onClick={(e) => {
           if (e.target === overlayRef.current) onClose();
         }}
+        aria-hidden
       />
-      <div className="relative w-full max-w-5xl rounded-2xl bg-white p-6 shadow-xl">
-        <button
-          onClick={onClose}
-          className="absolute right-3 top-3 rounded-full p-1 hover:bg-gray-100"
-          aria-label="Close"
-        >
-          <X className="h-5 w-5" />
-        </button>
+      <div className="relative w-full max-w-5xl overflow-hidden rounded-2xl border border-white/20 bg-white/90 shadow-2xl backdrop-blur-xl">
+        {/* Header */}
+        <div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-zinc-200/60 bg-white/70 px-6 py-4 backdrop-blur-xl">
+          <div>
+            <h2 className="text-xl sm:text-2xl font-bold text-zinc-900">
+              {mode === "edit" ? "Edit Discount" : "Add Discount"}
+            </h2>
+            <p className="text-xs text-zinc-500">
+              Configure discount details and applicable items
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="rounded-xl p-2 text-zinc-500 hover:bg-zinc-100"
+            aria-label="Close"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
 
-        <h2 className="mb-1 text-3xl font-bold">
-          {mode === "edit" ? "Edit Discount" : "Add Discount"}
-        </h2>
-        <p className="mb-6 text-sm text-gray-500">
-          Add discount and fill in the details for customer to use
-        </p>
-
+        {/* Body */}
         <form
           onSubmit={handleSubmit(submit)}
-          className="grid grid-cols-1 gap-6 md:grid-cols-2"
+          className="grid grid-cols-1 gap-6 p-6 md:grid-cols-2"
         >
           {/* Left column */}
           <div className="space-y-4">
-            {/* Name */}
             <div>
-              <label className="mb-1 block text-sm font-medium">Name:</label>
+              <label className="mb-1 block text-sm font-semibold text-zinc-800">
+                Name
+              </label>
               <input
                 type="text"
                 {...register("name", { required: "Required" })}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:ring-2 focus:ring-amber-400"
+                className="w-full rounded-xl border border-zinc-200 bg-white/80 px-3 py-2 text-sm shadow-sm outline-none focus:ring-2 focus:ring-amber-300"
               />
               {errors.name && (
-                <p className="mt-1 text-sm text-red-600">
+                <p className="mt-1 text-xs text-rose-600">
                   {errors.name.message as string}
                 </p>
               )}
             </div>
 
-            {/* Type */}
-            <div>
-              <label className="mb-1 block text-sm font-medium">Type:</label>
-              <select
-                {...register("type")}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:ring-2 focus:ring-amber-400"
-              >
-                <option value="Fixed">Fixed</option>
-                <option value="Percentage">Percentage</option>
-              </select>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div>
+                <label className="mb-1 block text-sm font-semibold text-zinc-800">
+                  Type
+                </label>
+                <select
+                  {...register("type")}
+                  className="w-full rounded-xl border border-zinc-200 bg-white/80 px-3 py-2 text-sm shadow-sm outline-none focus:ring-2 focus:ring-amber-300"
+                >
+                  <option value="Fixed">Fixed</option>
+                  <option value="Percentage">Percentage</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-semibold text-zinc-800">
+                  Value
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  inputMode="decimal"
+                  placeholder={
+                    watch("type") === "Percentage" ? "15" : "₱200.00"
+                  }
+                  {...register("value", {
+                    valueAsNumber: true,
+                    validate: (v) => {
+                      if (v == null || Number.isNaN(v)) return true;
+                      if (v < 0) return "Value must be ≥ 0";
+                      if (watch("type") === "Percentage" && v > 100)
+                        return "Percentage can’t exceed 100";
+                      return true;
+                    },
+                  })}
+                  className="w-full rounded-xl border border-zinc-200 bg-white/80 px-3 py-2 text-sm shadow-sm outline-none focus:ring-2 focus:ring-amber-300"
+                />
+                {errors.value && (
+                  <p className="mt-1 text-xs text-rose-600">
+                    {errors.value.message as string}
+                  </p>
+                )}
+              </div>
             </div>
 
-            {/* Value */}
-            <div>
-              <label className="mb-1 block text-sm font-medium">Value:</label>
-              <input
-                type="number"
-                step="0.01"
-                inputMode="decimal"
-                placeholder={watch("type") === "Percentage" ? "15" : "₱200.00"}
-                {...register("value", {
-                  valueAsNumber: true,
-                  validate: (v) => {
-                    if (v == null || Number.isNaN(v)) return true;
-                    if (v < 0) return "Value must be ≥ 0";
-                    if (watch("type") === "Percentage" && v > 100)
-                      return "Percentage can’t exceed 100";
-                    return true;
-                  },
-                })}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:ring-2 focus:ring-amber-400"
-              />
-              {errors.value && (
-                <p className="mt-1 text-sm text-red-600">
-                  {errors.value.message as string}
-                </p>
-              )}
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div>
+                <label className="mb-1 block text-sm font-semibold text-zinc-800">
+                  Applies To
+                </label>
+                <select
+                  {...appliesToReg}
+                  onChange={(e) => {
+                    appliesToReg.onChange(e);
+                    includedField.onChange([]); // clear when switching target
+                  }}
+                  className="w-full rounded-xl border border-zinc-200 bg-white/80 px-3 py-2 text-sm shadow-sm outline-none focus:ring-2 focus:ring-amber-300"
+                >
+                  <option value="Service">Service</option>
+                  <option value="Package">Package</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-semibold text-zinc-800">
+                  Amount of Uses
+                </label>
+                <input
+                  type="number"
+                  {...register("uses", { valueAsNumber: true })}
+                  className="w-full rounded-xl border border-zinc-200 bg-white/80 px-3 py-2 text-sm shadow-sm outline-none focus:ring-2 focus:ring-amber-300"
+                />
+              </div>
             </div>
 
-            {/* Applies To */}
-            <div>
-              <label className="mb-1 block text-sm font-medium">
-                Applies To:
-              </label>
-              <select
-                {...appliesToReg}
-                onChange={(e) => {
-                  appliesToReg.onChange(e); // update form value
-                  includedField.onChange([]); // clear selections only on USER toggle
-                }}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:ring-2 focus:ring-amber-400"
-              >
-                <option value="Service">Service</option>
-                <option value="Package">Package</option>
-              </select>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div>
+                <label className="mb-1 block text-sm font-semibold text-zinc-800">
+                  Start Date
+                </label>
+                <input
+                  type="date"
+                  min={todayISO}
+                  {...register("start_date", {
+                    valueAsDate: true,
+                    validate: (v) => {
+                      if (!v) return true;
+                      const sel = toLocalISODate(v);
+                      if (sel < todayISO)
+                        return "Start date can’t be in the past";
+                      return true;
+                    },
+                  })}
+                  className="w-full rounded-xl border border-zinc-200 bg-white/80 px-3 py-2 text-sm shadow-sm outline-none focus:ring-2 focus:ring-amber-300"
+                />
+                {errors.start_date && (
+                  <p className="mt-1 text-xs text-rose-600">
+                    {errors.start_date.message as string}
+                  </p>
+                )}
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-semibold text-zinc-800">
+                  End Date
+                </label>
+                <input
+                  type="date"
+                  min={dynamicEndMinISO}
+                  {...register("end_date", {
+                    valueAsDate: true,
+                    validate: (v, form) => {
+                      if (!v) return true;
+                      const endISO = toLocalISODate(v);
+                      if (endISO < todayISO)
+                        return "End date can’t be in the past";
+                      const s = form.start_date as Date | undefined | null;
+                      if (s) {
+                        const startISO = toLocalISODate(s);
+                        if (endISO < startISO)
+                          return "End date can’t be before the start date";
+                      }
+                      return true;
+                    },
+                  })}
+                  className="w-full rounded-xl border border-zinc-200 bg-white/80 px-3 py-2 text-sm shadow-sm outline-none focus:ring-2 focus:ring-amber-300"
+                />
+                {errors.end_date && (
+                  <p className="mt-1 text-xs text-rose-600">
+                    {errors.end_date.message as string}
+                  </p>
+                )}
+              </div>
             </div>
 
-            {/* Start Date (no past dates) */}
-            <div>
-              <label className="mb-1 block text-sm font-medium">
-                Start Date:
-              </label>
-              <input
-                type="date"
-                min={todayISO}
-                {...register("start_date", {
-                  valueAsDate: true,
-                  validate: (v) => {
-                    if (!v) return true; // optional
-                    const sel = toLocalISODate(v);
-                    if (sel < todayISO)
-                      return "Start date can’t be in the past";
-                    return true;
-                  },
-                })}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:ring-2 focus:ring-amber-400"
-              />
-              {errors.start_date && (
-                <p className="mt-1 text-sm text-red-600">
-                  {errors.start_date.message as string}
-                </p>
-              )}
-            </div>
-
-            {/* Amount of Uses */}
-            <div>
-              <label className="mb-1 block text-sm font-medium">
-                Amount of Uses:
-              </label>
-              <input
-                type="number"
-                {...register("uses", { valueAsNumber: true })}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:ring-2 focus:ring-amber-400"
-              />
-            </div>
-
-            {/* Status */}
             <div className="flex items-center gap-3 pt-1">
-              <span className="text-sm font-medium">Status:</span>
+              <span className="text-sm font-semibold text-zinc-800">
+                Status
+              </span>
               <label className="inline-flex cursor-pointer items-center gap-2">
                 <input
                   type="checkbox"
-                  {...register("status")}
                   checked={watch("status") === "Active"}
                   onChange={(e) =>
-                    (e.target as HTMLInputElement).checked
-                      ? (reset({ ...watch(), status: "Active" }), undefined)
-                      : (reset({ ...watch(), status: "Inactive" }), undefined)
+                    e.currentTarget.checked
+                      ? reset({ ...watch(), status: "Active" })
+                      : reset({ ...watch(), status: "Inactive" })
                   }
                 />
-                <span className="text-sm">Active</span>
+                <span className="text-sm text-zinc-700">Active</span>
               </label>
             </div>
           </div>
 
-          {/* Right column — Included Items + Discounted (read-only) + End Date */}
+          {/* Right column */}
           <div className="space-y-4">
-            {/* Included Items: list of checkboxes (services OR packages) */}
             <div>
-              <label className="mb-1 block text-sm font-medium">
-                {isService ? "Included Services :" : "Included Packages :"}
+              <label className="mb-1 block text-sm font-semibold text-zinc-800">
+                {isService ? "Included Services" : "Included Packages"}
               </label>
 
-              <div className="h-40 w-full overflow-auto rounded-lg border border-gray-300 p-2">
+              <div className="h-44 w-full overflow-auto rounded-xl border border-zinc-200 bg-white/70 p-2">
                 {currentItems.length === 0 && (
-                  <p className="px-1 text-sm text-gray-500">
+                  <p className="px-1 text-sm text-zinc-500">
                     No items available.
                   </p>
                 )}
                 <ul className="space-y-2">
                   {currentItems.map((s: any) => {
-                    const selected = (includedField.value as string[]).includes(
-                      s.id
-                    );
+                    const selected = (
+                      includedField.value as string[]
+                    )?.includes(s.id);
                     const rightText = isService
                       ? ` — ${peso(Number(s.min_price ?? 0))} — ${peso(
                           Number(s.max_price ?? s.min_price ?? 0)
@@ -514,7 +554,7 @@ function DiscountModal({
                       : "";
                     return (
                       <li key={s.id}>
-                        <label className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 hover:bg-gray-50">
+                        <label className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1 hover:bg-zinc-50">
                           <input
                             type="checkbox"
                             className="h-4 w-4"
@@ -523,13 +563,12 @@ function DiscountModal({
                               const current = new Set(
                                 (includedField.value as string[]) ?? []
                               );
-                              if ((e.target as HTMLInputElement).checked)
-                                current.add(s.id);
+                              if (e.currentTarget.checked) current.add(s.id);
                               else current.delete(s.id);
                               includedField.onChange(Array.from(current));
                             }}
                           />
-                          <span className="text-sm">
+                          <span className="text-sm text-zinc-800">
                             {s.name}
                             {rightText}
                           </span>
@@ -543,7 +582,7 @@ function DiscountModal({
               <div className="mt-2 flex gap-3">
                 <button
                   type="button"
-                  className="text-xs text-gray-600 underline"
+                  className="text-xs font-semibold text-amber-700 underline"
                   onClick={() =>
                     includedField.onChange(currentItems.map((s: any) => s.id))
                   }
@@ -552,7 +591,7 @@ function DiscountModal({
                 </button>
                 <button
                   type="button"
-                  className="text-xs text-gray-600 underline"
+                  className="text-xs text-zinc-600 underline"
                   onClick={() => includedField.onChange([])}
                 >
                   Clear
@@ -560,10 +599,9 @@ function DiscountModal({
               </div>
             </div>
 
-            {/* Discounted (READ-ONLY, computed) */}
             <div>
-              <label className="mb-1 block text-sm font-medium">
-                Discounted Total:
+              <label className="mb-1 block text-sm font-semibold text-zinc-800">
+                Discounted Total
               </label>
               <input
                 type="text"
@@ -577,65 +615,33 @@ function DiscountModal({
                       )} (from ${peso(subtotalMin)} — ${peso(subtotalMax)})`
                     : `${peso(discountedMin)} (from ${peso(subtotalMin)})`
                 }
-                className="w-full cursor-not-allowed rounded-lg border border-gray-300 bg-gray-50 px-3 py-2 text-gray-700 outline-none"
+                className="w-full cursor-not-allowed rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-700"
                 title="Calculated from selected items and discount value"
               />
             </div>
-
-            {/* End Date (no past dates, and not before start date) */}
-            <div>
-              <label className="mb-1 block text-sm font-medium">
-                End Date:
-              </label>
-              <input
-                type="date"
-                min={dynamicEndMinISO}
-                {...register("end_date", {
-                  valueAsDate: true,
-                  validate: (v, form) => {
-                    if (!v) return true; // optional
-                    const endISO = toLocalISODate(v);
-                    if (endISO < todayISO)
-                      return "End date can’t be in the past";
-                    const s = form.start_date as Date | undefined | null;
-                    if (s) {
-                      const startISO = toLocalISODate(s);
-                      if (endISO < startISO)
-                        return "End date can’t be before the start date";
-                    }
-                    return true;
-                  },
-                })}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:ring-2 focus:ring-amber-400"
-              />
-              {errors.end_date && (
-                <p className="mt-1 text-sm text-red-600">
-                  {errors.end_date.message as string}
-                </p>
-              )}
-            </div>
           </div>
 
-          {/* Buttons */}
-          <div className="col-span-1 mt-2 flex items-center justify-center gap-4 md:col-span-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-xl bg-red-600 px-6 py-2 font-medium text-white shadow hover:bg-red-700"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              className="rounded-xl bg-amber-400 px-6 py-2 font-medium text-black shadow hover:bg-amber-500 disabled:opacity-50"
-            >
-              {isSubmitting
-                ? mode === "edit"
-                  ? "Updating…"
-                  : "Saving…"
-                : "Save"}
-            </button>
+          <div className="md:col-span-2 border-t border-zinc-200/70 pt-4">
+            <div className="flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-xl border border-zinc-300 bg-white px-5 py-2 text-sm font-semibold text-zinc-800 hover:bg-zinc-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="rounded-xl bg-amber-500 px-5 py-2 text-sm font-semibold text-white shadow-sm hover:bg-amber-600 disabled:opacity-60"
+              >
+                {isSubmitting
+                  ? mode === "edit"
+                    ? "Updating…"
+                    : "Saving…"
+                  : "Save"}
+              </button>
+            </div>
           </div>
         </form>
       </div>
@@ -648,26 +654,24 @@ function DiscountModal({
 const AdminDiscount: React.FC = () => {
   const { services: svc } = useServicesAndStylistContext();
 
-  // Pull from promo-management context (backed by usePromoManagement hook)
   const {
     packages,
     fetchPackages,
     discounts,
     fetchDiscounts,
     addDiscount,
+    updateDiscount,
     deleteDiscount,
   } = usePromoManagementContext();
 
   const [openAdd, setOpenAdd] = useState(false);
 
-  // Fetch packages & discounts on mount
   useEffect(() => {
     fetchPackages?.();
     fetchDiscounts?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Normalize services to {id, name, min_price, max_price}
   const normalizedServices: ServiceItem[] = useMemo(
     () =>
       (svc ?? []).map((s: any) => ({
@@ -681,7 +685,6 @@ const AdminDiscount: React.FC = () => {
     [svc]
   );
 
-  // Normalize packages to {id, name, price}
   const normalizedPackages: PackageItem[] = useMemo(
     () =>
       (packages ?? []).map((p: any) => ({
@@ -692,7 +695,6 @@ const AdminDiscount: React.FC = () => {
     [packages]
   );
 
-  // Map for displaying names in table across both sources
   const allItemsMap = useMemo(() => {
     const m = new Map<string, string>();
     normalizedServices.forEach((s) => m.set(s.id, s.name));
@@ -700,7 +702,6 @@ const AdminDiscount: React.FC = () => {
     return m;
   }, [normalizedServices, normalizedPackages]);
 
-  // Utility to compute discounted min/max from a DiscountFormData
   const computeDiscountedRange = (d: DiscountFormData) => {
     if (d.applies_to === "Package") {
       const byId = new Map(
@@ -754,10 +755,8 @@ const AdminDiscount: React.FC = () => {
     }
   };
 
-  // Local UI table rows (derived from discounts + normalized items)
   const [rows, setRows] = useState<DiscountRow[]>([]);
 
-  // Whenever discounts or normalized items change, rebuild UI rows
   useEffect(() => {
     const next = (discounts ?? []).map((d: any): DiscountRow => {
       const formLike: DiscountFormData = {
@@ -788,14 +787,42 @@ const AdminDiscount: React.FC = () => {
       };
     });
     setRows(next);
-  }, [discounts, normalizedServices, normalizedPackages]); // normalized lists affect computed ranges
+  }, [discounts, normalizedServices, normalizedPackages]);
 
-  // Add — uses addDiscount() then refreshes from backend
+  // ----- ADD -----
   const handleSaveAdd = async (d: DiscountFormData): Promise<boolean> => {
     try {
       if (!addDiscount) return false;
+
+      const incomingName = (d.name ?? "").trim();
+      if (!incomingName) {
+        alert("Please enter a discount name.");
+        return false;
+      }
+
+      const dupLocal = (discounts ?? []).some((x: any) => {
+        const nm = (x?.name ?? "").trim().toLowerCase();
+        return nm === incomingName.toLowerCase();
+      });
+      if (dupLocal) {
+        alert(`A discount named "${incomingName}" already exists.`);
+        return false;
+      }
+
+      const { data: existing, error: checkErr } = await supabase
+        .from("Discounts")
+        .select("discount_id, name")
+        .ilike("name", incomingName)
+        .limit(1);
+
+      if (checkErr) throw checkErr;
+      if (existing && existing.length > 0) {
+        alert(`A discount named "${incomingName}" already exists.`);
+        return false;
+      }
+
       const res = await addDiscount({
-        name: d.name,
+        name: incomingName,
         type: d.type,
         value: d.value,
         applies_to: d.applies_to,
@@ -808,18 +835,20 @@ const AdminDiscount: React.FC = () => {
 
       if (!res?.success) {
         console.error("Failed to add discount:", (res as any)?.message);
+        alert("Failed to add discount. Please try again.");
         return false;
       }
 
-      await fetchDiscounts?.(); // refresh table from DB
+      await fetchDiscounts?.();
       return true;
     } catch (e) {
       console.error(e);
+      alert("Something went wrong while adding the discount.");
       return false;
     }
   };
 
-  // Edit — still local UI only (no backend update endpoint yet)
+  // ----- EDIT -----
   const [openEdit, setOpenEdit] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingInitial, setEditingInitial] = useState<
@@ -843,7 +872,14 @@ const AdminDiscount: React.FC = () => {
   };
 
   const handleSaveEdit = async (d: DiscountFormData): Promise<boolean> => {
-    if (!editingId) return false;
+    if (!editingId || !updateDiscount) return false;
+
+    const res = await updateDiscount(editingId, d);
+    if (!res?.success) {
+      alert(res?.message ?? "Failed to update discount.");
+      return false;
+    }
+
     const { min, max } = computeDiscountedRange(d);
     setRows((prev) =>
       prev.map((r) =>
@@ -867,11 +903,10 @@ const AdminDiscount: React.FC = () => {
           : r
       )
     );
-    // Note: not persisted; add an update endpoint in hook later if needed
     return true;
   };
 
-  // Delete — calls deleteDiscount() (soft delete), then updates UI
+  // ----- DELETE -----
   const [openDelete, setOpenDelete] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deletingName, setDeletingName] = useState<string>("");
@@ -896,117 +931,127 @@ const AdminDiscount: React.FC = () => {
   };
 
   return (
-    <div className="mx-auto max-w-6xl">
+    <div className="mx-auto max-w-7xl">
       {/* Header */}
       <div className="mb-4 flex items-center">
-        <h2 className="text-2xl font-semibold">Discounts</h2>
+        <h2 className="text-2xl sm:text-3xl font-bold">Discounts</h2>
         <div className="ml-auto">
           <button
             onClick={() => setOpenAdd(true)}
-            className="flex items-center gap-2 rounded-xl bg-amber-400 px-4 py-2 font-medium text-black shadow hover:bg-amber-500"
+            className="inline-flex items-center gap-2 rounded-xl border border-amber-300/60 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-800 shadow-sm hover:bg-amber-100 active:scale-[0.99] transition"
           >
-            <Plus className="h-5 w-5" />
+            <Plus className="h-4 w-4" />
             Add Discount
           </button>
         </div>
       </div>
 
-      {/* Table */}
-      <div className="overflow-hidden rounded-2xl border border-gray-200">
-        <table className="min-w-full divide-y divide-gray-200 text-sm">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="px-4 py-3 text-left font-semibold">Name</th>
-              <th className="px-4 py-3 text-left font-semibold">Type</th>
-              <th className="px-4 py-3 text-left font-semibold">Value</th>
-              <th className="px-4 py-3 text-left font-semibold">Applies To</th>
-              <th className="px-4 py-3 text-left font-semibold">
-                Included Items
-              </th>
-              <th className="px-4 py-3 text-left font-semibold">Discounted</th>
-              <th className="px-4 py-3 text-left font-semibold">Start</th>
-              <th className="px-4 py-3 text-left font-semibold">End</th>
-              <th className="px-4 py-3 text-left font-semibold">Uses</th>
-              <th className="px-4 py-3 text-left font-semibold">Status</th>
-              <th className="px-4 py-3 text-left font-semibold">Action</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-100">
-            {rows.map((r, i) => {
-              const discountedCell =
-                typeof r.discounted_min === "number" &&
-                typeof r.discounted_max === "number"
-                  ? r.discounted_min === r.discounted_max
-                    ? peso(r.discounted_min)
-                    : `${peso(r.discounted_min)} — ${peso(r.discounted_max)}`
-                  : "—";
-              return (
-                <tr
-                  key={r.id}
-                  className={i % 2 === 0 ? "bg-orange-50/50" : "bg-white"}
-                >
-                  <td className="px-4 py-4">{r.name}</td>
-                  <td className="px-4 py-4">{r.type}</td>
-                  <td className="px-4 py-4">
-                    {r.type === "Percentage" ? `${r.value}%` : peso(r.value)}
-                  </td>
-                  <td className="px-4 py-4">{r.applies_to}</td>
-                  <td className="px-4 py-4">
-                    {r.included_services
-                      .map((id) => allItemsMap.get(id) ?? id)
-                      .filter(Boolean)
-                      .join(", ") || "—"}
-                  </td>
-                  <td className="px-4 py-4">{discountedCell}</td>
-                  <td className="px-4 py-4">{humanDate(r.start_date)}</td>
-                  <td className="px-4 py-4">{humanDate(r.end_date)}</td>
-                  <td className="px-4 py-4">{r.uses ?? "—"}</td>
-                  <td className="px-4 py-4">
-                    <span
-                      className={
-                        "rounded-full px-3 py-1 text-sm " +
-                        (r.status === "Active"
-                          ? "bg-green-100 text-green-700"
-                          : "bg-red-100 text-red-600")
-                      }
-                    >
-                      {r.status}
-                    </span>
-                  </td>
-                  <td className="px-4 py-4">
-                    <div className="flex items-center gap-3 text-gray-600">
-                      <button
-                        className="rounded p-1 hover:bg-gray-100"
-                        title="Edit"
-                        onClick={() => openEditModalFor(r)}
+      {/* Table Card */}
+      <section className="overflow-hidden rounded-2xl border border-zinc-200 bg-white/70 shadow-sm backdrop-blur-sm">
+        <div className="max-h-[70vh] overflow-auto">
+          <table className="min-w-full text-left text-sm">
+            <thead className="sticky top-0 z-10 border-b border-zinc-200 bg-white/90 backdrop-blur">
+              <tr className="text-[11px] uppercase tracking-wide text-zinc-500">
+                <th className="px-5 py-3 font-semibold">Name</th>
+                <th className="px-5 py-3 font-semibold">Type</th>
+                <th className="px-5 py-3 font-semibold">Value</th>
+                <th className="px-5 py-3 font-semibold">Applies To</th>
+                <th className="px-5 py-3 font-semibold">Included Items</th>
+                <th className="px-5 py-3 font-semibold">Discounted</th>
+                <th className="px-5 py-3 font-semibold">Start</th>
+                <th className="px-5 py-3 font-semibold">End</th>
+                <th className="px-5 py-3 font-semibold">Uses</th>
+                <th className="px-5 py-3 font-semibold">Status</th>
+                <th className="px-5 py-3 text-right font-semibold">Action</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-100">
+              {rows.map((r, i) => {
+                const discountedCell =
+                  typeof r.discounted_min === "number" &&
+                  typeof r.discounted_max === "number"
+                    ? r.discounted_min === r.discounted_max
+                      ? peso(r.discounted_min)
+                      : `${peso(r.discounted_min)} — ${peso(r.discounted_max)}`
+                    : "—";
+                return (
+                  <tr
+                    key={r.id}
+                    className={[
+                      "transition-colors",
+                      i % 2 === 0 ? "bg-white" : "bg-amber-50/30",
+                      "hover:bg-amber-50/60",
+                    ].join(" ")}
+                  >
+                    <td className="px-5 py-3 text-zinc-900">{r.name}</td>
+                    <td className="px-5 py-3 text-zinc-800">{r.type}</td>
+                    <td className="px-5 py-3 text-zinc-900">
+                      {r.type === "Percentage" ? `${r.value}%` : peso(r.value)}
+                    </td>
+                    <td className="px-5 py-3 text-zinc-800">{r.applies_to}</td>
+                    <td className="px-5 py-3 text-zinc-800">
+                      {r.included_services
+                        .map((id) => allItemsMap.get(id) ?? id)
+                        .filter(Boolean)
+                        .join(", ") || "—"}
+                    </td>
+                    <td className="px-5 py-3 text-zinc-900">
+                      {discountedCell}
+                    </td>
+                    <td className="px-5 py-3 text-zinc-800">
+                      {humanDate(r.start_date)}
+                    </td>
+                    <td className="px-5 py-3 text-zinc-800">
+                      {humanDate(r.end_date)}
+                    </td>
+                    <td className="px-5 py-3 text-zinc-800">{r.uses ?? "—"}</td>
+                    <td className="px-5 py-3">
+                      <span
+                        className={[
+                          "rounded-full px-3 py-1 text-xs font-semibold ring-1 ring-inset",
+                          r.status === "Active"
+                            ? "bg-emerald-50 text-emerald-700 ring-emerald-200"
+                            : "bg-rose-50 text-rose-700 ring-rose-200",
+                        ].join(" ")}
                       >
-                        <Pencil className="h-5 w-5" />
-                      </button>
-                      <button
-                        className="rounded p-1 hover:bg-gray-100"
-                        title="Delete"
-                        onClick={() => openDeleteModalFor(r)}
-                      >
-                        <Trash2 className="h-5 w-5 text-red-600" />
-                      </button>
-                    </div>
+                        {r.status}
+                      </span>
+                    </td>
+                    <td className="px-5 py-3">
+                      <div className="flex items-center justify-end gap-2">
+                        <button
+                          className="inline-flex items-center rounded-lg p-2 text-zinc-700 hover:bg-zinc-100 focus:outline-none focus:ring-2 focus:ring-amber-300"
+                          title="Edit"
+                          onClick={() => openEditModalFor(r)}
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </button>
+                        <button
+                          className="inline-flex items-center rounded-lg p-2 text-rose-600 hover:bg-rose-50 focus:outline-none focus:ring-2 focus:ring-rose-300"
+                          title="Delete"
+                          onClick={() => openDeleteModalFor(r)}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+              {rows.length === 0 && (
+                <tr>
+                  <td
+                    className="px-5 py-10 text-center text-zinc-500"
+                    colSpan={11}
+                  >
+                    No discounts yet.
                   </td>
                 </tr>
-              );
-            })}
-            {rows.length === 0 && (
-              <tr>
-                <td
-                  className="px-4 py-6 text-center text-gray-500"
-                  colSpan={11}
-                >
-                  No discounts yet.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
 
       {/* Add Modal */}
       <DiscountModal
@@ -1020,7 +1065,7 @@ const AdminDiscount: React.FC = () => {
 
       {/* Edit Modal */}
       <DiscountModal
-        key={openEdit ? editingId ?? "edit" : "edit-closed"} // force clean mount per row
+        key={openEdit ? editingId ?? "edit" : "edit-closed"}
         open={openEdit}
         mode="edit"
         onClose={() => setOpenEdit(false)}

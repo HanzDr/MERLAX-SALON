@@ -32,6 +32,9 @@ import { FeedbackProvider } from "@/features/feedback/context/FeedbackContext";
 import { AuthProvider } from "@/features/auth/context/AuthContext";
 import AdminInventory from "@/pages/admin/AdminInventory";
 import { InventoryProvider } from "@/features/inventory/context/InventoryContext";
+import UpdatePassword from "@/pages/UpdatePassword";
+import { AnalyticsProvider } from "@/features/analytics/context/AnalyticsContext";
+import AdminAnalytics from "@/pages/admin/AdminAnalytics";
 const router = createBrowserRouter([
   {
     path: "/",
@@ -40,8 +43,8 @@ const router = createBrowserRouter([
       // Public auth routes
       { path: "auth/callback", element: <AuthCallback /> },
       { path: "customer/login", element: <CustomerLogin /> },
-      { path: "customer/signup", element: <CustomerSignUp /> },
-      { path: "customer/resetPassword", element: <ResetPassword /> },
+      { path: "signup", element: <CustomerSignUp /> },
+      { path: "reset-password", element: <ResetPassword /> },
       { path: "admin/login", element: <AdminLogin /> },
 
       // Admin routes (protected)
@@ -79,7 +82,13 @@ const router = createBrowserRouter([
             path: "customers",
             element: (
               <PaginationProvider>
-                <AdminCustomers />
+                <ServicesAndStylistProvider>
+                  <AppointmentProvider>
+                    <FeedbackProvider>
+                      <AdminCustomers />
+                    </FeedbackProvider>
+                  </AppointmentProvider>
+                </ServicesAndStylistProvider>
               </PaginationProvider>
             ),
           },
@@ -89,6 +98,15 @@ const router = createBrowserRouter([
               <FeedbackProvider>
                 <AdminFeedback />
               </FeedbackProvider>
+            ),
+          },
+
+          {
+            path: "analytics",
+            element: (
+              <AnalyticsProvider>
+                <AdminAnalytics />
+              </AnalyticsProvider>
             ),
           },
           {
@@ -146,7 +164,8 @@ const router = createBrowserRouter([
           { path: "profile", element: <CustomerProfile /> },
         ],
       },
-
+      { path: "reset-password", element: <ResetPassword /> },
+      { path: "update-password", element: <UpdatePassword /> },
       // 404 fallback
       { path: "*", element: <NotFoundPage /> },
     ],
