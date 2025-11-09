@@ -293,6 +293,7 @@ const AdminAppointmentHistory: React.FC = () => {
   // Prevent races
   const reqIdRef = useRef(0);
 
+<<<<<<< HEAD
   // Helper to normalize list
   const normalize = (arr: any[]): HistoryRow[] =>
     (arr ?? []).map((r) => ({
@@ -400,6 +401,40 @@ const AdminAppointmentHistory: React.FC = () => {
     }
   };
 
+=======
+  // Fetch page (stable deps only)
+  const fetchPage = async (p = page, ps = pageSize, q = search) => {
+    const myReqId = ++reqIdRef.current;
+    setLoading(true);
+    setErr(null);
+    try {
+      const res = await loadHistoryRef.current({
+        page: p,
+        pageSize: ps,
+        search: q,
+      });
+
+      if (myReqId !== reqIdRef.current) return;
+
+      // Normalize date to "YYYY-MM-DD" for consistency
+      const items = (res?.items ?? []).map((r) => ({
+        ...r,
+        service_date: toYMD(r.service_date) ?? r.service_date,
+      })) as HistoryRow[];
+
+      setRows(items);
+      setTotal(Number(res?.total ?? 0));
+      setInitialized(true);
+    } catch (e: any) {
+      if (myReqId !== reqIdRef.current) return;
+      setErr(e?.message || "Failed to load history.");
+      setInitialized(true);
+    } finally {
+      if (myReqId === reqIdRef.current) setLoading(false);
+    }
+  };
+
+>>>>>>> 2a8dfd498642c07a3b20c3c73175f2c4b57bb785
   useEffect(() => {
     fetchPage().catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -430,11 +465,44 @@ const AdminAppointmentHistory: React.FC = () => {
   const goTo = (p: number) =>
     setPage(Math.max(1, Math.min(totalPages, p || 1)));
 
+<<<<<<< HEAD
   // ===== Receipt data fetchers (services/products/discounts) =====
   type ReceiptExtra = {
     services: string[];
     products: string[];
     discounts: Array<{ label: string; amountOff: number; percentOff: number }>;
+=======
+  // Actions
+  const onPrintReceipt = (row: HistoryRow) => openReceiptPrint(row);
+
+  const onDelete = async (row: HistoryRow) => {
+    const yes = window.confirm(
+      "Delete this appointment from history? This will hide it (soft delete)."
+    );
+    if (!yes) return;
+
+    // Optimistic remove
+    const prevRows = rows;
+    const prevTotal = total;
+
+    setRows((r) => r.filter((x) => x.id !== row.id));
+    setTotal((t) => Math.max(0, t - 1));
+
+    try {
+      await softDeleteAppointment(row.id); // flips display=false
+      // If page becomes empty and not the first page, go back one page and refetch
+      if (rows.length === 1 && page > 1) {
+        setPage((p) => p - 1);
+      } else {
+        await fetchPage(page, pageSize, search);
+      }
+    } catch (e: any) {
+      // Roll back optimistic change
+      setRows(prevRows);
+      setTotal(prevTotal);
+      alert(e?.message ?? "Failed to delete appointment.");
+    }
+>>>>>>> 2a8dfd498642c07a3b20c3c73175f2c4b57bb785
   };
 
   const fetchReceiptExtras = async (

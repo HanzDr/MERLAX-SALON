@@ -69,7 +69,11 @@ const toDateTimeLabel = (dateISO?: string, hhmm?: string) => {
     const [y, m, d] = dateISO.split("-").map(Number);
     const [hh = 0, mm = 0] = (hhmm ?? "00:00").split(":").map(Number);
     const dt = new Date(y, (m || 1) - 1, d || 1, hh, mm);
+<<<<<<< HEAD
     return dt.toLocaleString("en-US", {
+=======
+    return dt.toLocaleString(undefined, {
+>>>>>>> 2a8dfd498642c07a3b20c3c73175f2c4b57bb785
       month: "short",
       day: "2-digit",
       year: "numeric",
@@ -212,7 +216,11 @@ const ViewProfileModal = ({
           const dt =
             r.created_at &&
             new Date(r.created_at).toLocaleDateString("en-US", {
+<<<<<<< HEAD
               month: "short",
+=======
+              month: "2-digit",
+>>>>>>> 2a8dfd498642c07a3b20c3c73175f2c4b57bb785
               day: "2-digit",
               year: "numeric",
             });
@@ -247,8 +255,12 @@ const ViewProfileModal = ({
     })();
 
     return () => {
+<<<<<<< HEAD
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       let _ = (cancelled = true);
+=======
+      cancelled = true;
+>>>>>>> 2a8dfd498642c07a3b20c3c73175f2c4b57bb785
     };
   }, [
     open,
@@ -262,6 +274,7 @@ const ViewProfileModal = ({
 
   const statusPill = (s?: string) => {
     const v = (s || "").toLowerCase();
+<<<<<<< HEAD
     if (v.includes("book"))
       return "bg-blue-50 text-blue-700 ring-1 ring-blue-200";
     if (v.includes("complete"))
@@ -271,6 +284,13 @@ const ViewProfileModal = ({
     if (v.includes("ongo"))
       return "bg-fuchsia-50 text-fuchsia-700 ring-1 ring-fuchsia-200";
     return "bg-gray-100 text-gray-700 ring-1 ring-gray-200";
+=======
+    if (v.includes("book")) return "bg-blue-100 text-blue-700";
+    if (v.includes("complete")) return "bg-emerald-100 text-emerald-700";
+    if (v.includes("cancel")) return "bg-rose-100 text-rose-700";
+    if (v.includes("ongo")) return "bg-fuchsia-100 text-fuchsia-700";
+    return "bg-gray-100 text-gray-700";
+>>>>>>> 2a8dfd498642c07a3b20c3c73175f2c4b57bb785
   };
 
   const StarRow = ({ value = 0 }: { value?: number }) => {
@@ -296,6 +316,7 @@ const ViewProfileModal = ({
       : 0;
 
   return (
+<<<<<<< HEAD
     <div
       className="fixed inset-0 z-[999] flex items-center justify-center"
       role="dialog"
@@ -322,6 +343,55 @@ const ViewProfileModal = ({
               </h3>
               <p className="text-xs text-gray-500">
                 ID: {profile.customer_id ?? profile.userId ?? "—"}
+=======
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      <div className="absolute inset-0 bg-black/30" onClick={onClose} />
+      <div className="relative w-full max-w-6xl max-h[90vh] overflow-hidden rounded-2xl bg-white shadow-xl">
+        {/* Header */}
+        <div className="flex items-center justify-between border-b px-6 py-4">
+          <h3 className="text-2xl font-bold">Customer Profile</h3>
+          <div className="flex items-center gap-2">
+            {profile.role !== "admin" ? (
+              <button
+                disabled={busy}
+                onClick={() => onToggleBlock?.(profile)}
+                className={`rounded-xl px-3 py-2 text-sm font-medium disabled:opacity-60 ${
+                  profile.is_blocked
+                    ? "bg-emerald-600 text-white hover:bg-emerald-700"
+                    : "bg-rose-600 text-white hover:bg-rose-700"
+                }`}
+              >
+                {profile.is_blocked ? "Unblock" : "Block"}
+              </button>
+            ) : null}
+
+            <button
+              onClick={onClose}
+              className="rounded-full p-2 hover:bg-gray-100"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+        </div>
+
+        {/* Body */}
+        <div className="p-6 overflow-y-auto max-h-[calc(90vh-64px)]">
+          {loadingExtra && (
+            <div className="mb-4 text-sm text-gray-500">Loading data…</div>
+          )}
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {/* Left card: Customer details */}
+            <section className="rounded-2xl border p-6">
+              <div className="mx-auto mb-4 flex h-28 w-28 items-center justify-center rounded-full bg-amber-200 text-amber-700">
+                <span className="text-4xl font-bold">
+                  {fullName?.[0]?.toUpperCase() ?? "?"}
+                </span>
+              </div>
+              <h4 className="text-center text-lg font-semibold">{fullName}</h4>
+              <p className="mt-1 text-center text-xs text-gray-500">
+                User ID: {profile.customer_id ?? profile.userId ?? "—"}
+>>>>>>> 2a8dfd498642c07a3b20c3c73175f2c4b57bb785
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -357,12 +427,98 @@ const ViewProfileModal = ({
               </div>
             )}
 
+<<<<<<< HEAD
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               {/* Left card: Customer details */}
               <section className="rounded-2xl border border-gray-100 bg-white/70 p-6 shadow-sm backdrop-blur-sm">
                 <div className="mx-auto mb-4 flex h-28 w-28 items-center justify-center rounded-full bg-gradient-to-br from-amber-200 to-amber-300 text-amber-800 shadow-inner">
                   <span className="text-4xl font-black">
                     {fullName?.[0]?.toUpperCase() ?? "?"}
+=======
+            {/* Upcoming Appointments */}
+            <section className="md:col-span-2 rounded-2xl border p-6">
+              <h4 className="text-xl font-semibold">Upcoming Appointments</h4>
+              <div className="mt-4 divide-y rounded-xl border bg-white max-h-56 overflow-y-auto">
+                {upcoming.length === 0 && (
+                  <div className="p-4 text-sm text-gray-500">
+                    No upcoming appointments.
+                  </div>
+                )}
+                {upcoming.map((a, i) => (
+                  <div
+                    key={a.id ?? i}
+                    className="flex items-center justify-between p-4"
+                  >
+                    <div>
+                      <div className="text-sm font-medium text-gray-800">
+                        {a.datetime ?? "—"}
+                      </div>
+                      {a.service && (
+                        <div className="text-sm text-gray-500">
+                          Service: {a.service}
+                        </div>
+                      )}
+                    </div>
+                    <span
+                      className={`rounded-full px-3 py-1 text-xs font-medium ${statusPill(
+                        a.status
+                      )}`}
+                    >
+                      {a.status ?? "—"}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            {/* Service Transactions */}
+            <section className="md:col-span-3 rounded-2xl border p-6">
+              <h4 className="text-xl font-semibold">Service Transactions</h4>
+              <p className="mt-1 text-xs text-gray-500">
+                Completed and Cancelled appointments
+              </p>
+              <div className="mt-4 divide-y rounded-xl border bg-white max-h-72 overflow-y-auto">
+                {transactions.length === 0 && (
+                  <div className="p-4 text-sm text-gray-500">
+                    No service transactions.
+                  </div>
+                )}
+                {transactions.map((t, i) => (
+                  <div
+                    key={t.id ?? i}
+                    className="flex items-center justify-between p-4"
+                  >
+                    <div>
+                      <div className="text-sm font-medium text-gray-800">
+                        {t.datetime ?? "—"}
+                      </div>
+                      {t.service && (
+                        <div className="text-sm text-gray-500">
+                          Service: {t.service}
+                        </div>
+                      )}
+                    </div>
+                    <span
+                      className={`rounded-full px-3 py-1 text-xs font-medium ${statusPill(
+                        t.status
+                      )}`}
+                    >
+                      {t.status ?? "—"}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            {/* Feedback History */}
+            <section className="md:col-span-3 rounded-2xl border p-6">
+              <div className="flex flex-wrap items-center justify-between">
+                <h4 className="text-2xl font-bold">Feedback History</h4>
+                <div className="flex items-center gap-3 text-sm text-gray-900">
+                  <StarRow value={avgRating} />
+                  <span className="font-semibold">
+                    {avgRating.toFixed(1)} Average Rating
+>>>>>>> 2a8dfd498642c07a3b20c3c73175f2c4b57bb785
                   </span>
                 </div>
                 <h4 className="text-center text-lg font-semibold">
@@ -372,12 +528,65 @@ const ViewProfileModal = ({
                   User ID: {profile.customer_id ?? profile.userId ?? "—"}
                 </p>
 
+<<<<<<< HEAD
                 <div className="mt-6 space-y-3 text-sm">
                   <div className="truncate">
                     <span className="font-medium text-gray-700">✉️ Email:</span>{" "}
                     <span className="text-gray-900">
                       {profile.email ?? "—"}
                     </span>
+=======
+              <div className="mt-4 space-y-6">
+                {customerFeedbacks.length === 0 && (
+                  <div className="text-sm text-gray-500">No feedback yet.</div>
+                )}
+
+                {customerFeedbacks.map((fb, i) => (
+                  <div
+                    key={fb.id ?? i}
+                    className="pb-6 border-b last:border-b-0"
+                  >
+                    {/* Stars + date row */}
+                    <div className="flex items-center justify-between">
+                      <StarRow value={fb.rating ?? 0} />
+                      <span className="text-sm text-gray-700">
+                        {fb.date ?? "—"}
+                      </span>
+                    </div>
+
+                    {/* Meta row */}
+                    <div className="mt-3 text-sm text-gray-800">
+                      <span className="font-semibold">Stylist:</span>{" "}
+                      {fb.stylist ?? "—"}
+                      <span className="mx-4" />
+                      <span className="font-semibold">Service:</span>{" "}
+                      {fb.service ?? "—"}
+                    </div>
+
+                    {/* Customer text */}
+                    {fb.text && <p className="mt-3 text-gray-900">{fb.text}</p>}
+
+                    {/* Add Response OR Admin Response (read-only) */}
+                    {!fb.adminResponse ? (
+                      <button
+                        className="mt-4 inline-flex items-center gap-2 rounded-lg bg-amber-400 px-4 py-2 text-sm font-semibold text-black hover:bg-amber-500"
+                        onClick={() => setRespondId(fb.id)}
+                      >
+                        <span className="text-lg leading-none">💬</span>
+                        Add Response
+                      </button>
+                    ) : (
+                      <div className="mt-4 rounded-2xl border bg-gray-50 p-4">
+                        <div className="mb-2 flex items-center gap-2 text-gray-800 font-semibold">
+                          <span className="text-lg">🛡️</span>
+                          Admin Response
+                        </div>
+                        <div className="text-sm text-gray-800 whitespace-pre-wrap">
+                          {fb.adminResponse}
+                        </div>
+                      </div>
+                    )}
+>>>>>>> 2a8dfd498642c07a3b20c3c73175f2c4b57bb785
                   </div>
                   <div>
                     <span className="font-medium text-gray-700">📞 Phone:</span>{" "}
@@ -560,7 +769,11 @@ const ViewProfileModal = ({
         </div>
       </div>
 
+<<<<<<< HEAD
       {/* Respond modal */}
+=======
+      {/* Respond modal (FeedbackForm). If already replied, it shows read-only. */}
+>>>>>>> 2a8dfd498642c07a3b20c3c73175f2c4b57bb785
       {respondId && (
         <FeedbackForm
           key={respondId}
@@ -765,6 +978,7 @@ const AdminCustomers = () => {
               </tr>
             </thead>
 
+<<<<<<< HEAD
             <tbody className="divide-y divide-gray-100">
               {loading && (
                 <tr>
@@ -773,6 +987,22 @@ const AdminCustomers = () => {
                     className="px-6 py-10 text-center text-gray-500"
                   >
                     Loading…
+=======
+                      {c.role !== "admin" && (
+                        <button
+                          disabled={busyId === getId(c)}
+                          onClick={() => handleToggleBlock(c as ProfileLike)}
+                          className={`px-3 py-1 rounded-xl text-sm font-medium disabled:opacity-60 ${
+                            c.is_blocked
+                              ? "bg-emerald-600 text-white hover:bg-emerald-700"
+                              : "bg-rose-600 text-white hover:bg-rose-700"
+                          }`}
+                        >
+                          {c.is_blocked ? "Unblock" : "Block"}
+                        </button>
+                      )}
+                    </div>
+>>>>>>> 2a8dfd498642c07a3b20c3c73175f2c4b57bb785
                   </td>
                 </tr>
               )}

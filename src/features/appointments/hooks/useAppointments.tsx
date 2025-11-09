@@ -251,6 +251,7 @@ export function useAppointments() {
         };
       }
 
+<<<<<<< HEAD
       // Admin bypass: always OK (still return limits for context)
       if (bypassUsageCaps) {
         return {
@@ -261,6 +262,11 @@ export function useAppointments() {
           customer_limit: (disc as DiscountLimitRow).amount_of_uses ?? null,
         };
       }
+=======
+      const limits = disc as DiscountLimitRow;
+      const globalCap = limits.amount_of_uses;
+      const customerCap = 1 as number | null;
+>>>>>>> 2a8dfd498642c07a3b20c3c73175f2c4b57bb785
 
       // CURRENT BEHAVIOR: amount_of_uses = per-customer cap
       const customerCap = (disc as DiscountLimitRow).amount_of_uses ?? null;
@@ -632,11 +638,19 @@ export function useAppointments() {
       // delete child rows first, then the appointment
       const errs: any[] = [];
 
+<<<<<<< HEAD
       const delDisc = await supabase
         .from("AppointmentDiscount")
         .delete()
         .eq("appointment_id", appointment_id);
       if (delDisc.error) errs.push(delDisc.error);
+=======
+      const delDiscount = await supabase
+        .from("AppointmentDiscount")
+        .delete()
+        .eq("appointment_id", appointment_id);
+      if (delDiscount.error) errs.push(delDiscount.error);
+>>>>>>> 2a8dfd498642c07a3b20c3c73175f2c4b57bb785
 
       const delStylists = await supabase
         .from(TBL_APPT_STYLIST)
@@ -650,12 +664,15 @@ export function useAppointments() {
         .eq("appointment_id", appointment_id);
       if (delPlans.error) errs.push(delPlans.error);
 
+<<<<<<< HEAD
       const delApptProds = await supabase
         .from("AppointmentProducts")
         .delete()
         .eq("appointment_id", appointment_id);
       if (delApptProds.error) errs.push(delApptProds.error);
 
+=======
+>>>>>>> 2a8dfd498642c07a3b20c3c73175f2c4b57bb785
       const delAppt = await supabase
         .from("Appointments")
         .delete()
@@ -1067,7 +1084,10 @@ export function useAppointments() {
   );
 
   // ----------------- Customer History (paginated) — with STATUS support -----------------
+<<<<<<< HEAD
   // ----------------- Customer History (paginated) — with STATUS support -----------------
+=======
+>>>>>>> 2a8dfd498642c07a3b20c3c73175f2c4b57bb785
   const loadCustomerAppointmentHistory = useCallback(
     async (opts: {
       customer_id: string;
@@ -1076,6 +1096,7 @@ export function useAppointments() {
       status?: "Completed" | "Cancelled" | "Ongoing" | "Booked";
       search?: string;
     }): Promise<{
+<<<<<<< HEAD
       items: Array<
         HistoryRow & {
           start?: string | null;
@@ -1083,16 +1104,24 @@ export function useAppointments() {
           payment_method?: string | null;
         }
       >;
+=======
+      items: Array<HistoryRow & { start?: string | null; end?: string | null }>;
+>>>>>>> 2a8dfd498642c07a3b20c3c73175f2c4b57bb785
       total: number;
     }> => {
       const { customer_id, page, pageSize, status, search } = opts;
       const from = (page - 1) * pageSize;
       const to = from + pageSize - 1;
 
+<<<<<<< HEAD
+=======
+      // Build allowed statuses (case-insensitive via explicit variants)
+>>>>>>> 2a8dfd498642c07a3b20c3c73175f2c4b57bb785
       const statusList = status
         ? [status, status.toLowerCase()]
         : ["Completed", "Cancelled", "completed", "cancelled"];
 
+<<<<<<< HEAD
       // ✅ Include payment_method from your Appointments schema
       let base = supabase
         .from("Appointments")
@@ -1109,6 +1138,12 @@ export function useAppointments() {
           expectedEnd_time,
           payment_method
         `,
+=======
+      let base = supabase
+        .from("Appointments")
+        .select(
+          "appointment_id,date,status,total_amount,comments,customer_id,display,expectedStart_time,expectedEnd_time",
+>>>>>>> 2a8dfd498642c07a3b20c3c73175f2c4b57bb785
           { count: "exact" }
         )
         .eq("customer_id", customer_id)
@@ -1156,7 +1191,10 @@ export function useAppointments() {
             end: r.expectedEnd_time
               ? String(r.expectedEnd_time).slice(0, 5)
               : null,
+<<<<<<< HEAD
             payment_method: (r as any).payment_method ?? null, // ✅ pass through
+=======
+>>>>>>> 2a8dfd498642c07a3b20c3c73175f2c4b57bb785
           };
         }) ?? [];
 
@@ -1306,7 +1344,11 @@ export function useAppointments() {
     softDeleteAppointment,
     deleteAppointmentCascade,
     loadUpcomingCustomerAppointments,
+<<<<<<< HEAD
     loadCustomerAppointmentHistory,
+=======
+    loadCustomerAppointmentHistory, // now supports `status`
+>>>>>>> 2a8dfd498642c07a3b20c3c73175f2c4b57bb785
     // Discounts
     canUseDiscount,
     filterEligibleDiscountsForCustomer,

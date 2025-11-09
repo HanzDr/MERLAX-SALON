@@ -1,4 +1,8 @@
+<<<<<<< HEAD
 import React, { useEffect, useMemo, useRef, useState } from "react";
+=======
+import React from "react";
+>>>>>>> 2a8dfd498642c07a3b20c3c73175f2c4b57bb785
 import { Search, Trash2 } from "lucide-react";
 
 type Status = "Completed" | "Cancelled";
@@ -7,10 +11,16 @@ export type AppointmentRow = {
   id: string;
   service: string;
   stylist: string;
+<<<<<<< HEAD
   /** Can be any format coming in; we normalize for display + search */
   date: string;
   amount: string;
   paymentMode: string;
+=======
+  date: string; // e.g., 13/05/2025 (already formatted)
+  amount: string; // e.g., ₱495.00 (already formatted)
+  paymentMode: string; // e.g., "Bank" | "Cash"
+>>>>>>> 2a8dfd498642c07a3b20c3c73175f2c4b57bb785
   status: Status;
 };
 
@@ -29,6 +39,7 @@ type Props = {
   perPage?: number;
   onPerPageChange?: (n: number) => void;
 
+<<<<<<< HEAD
   /* Search */
   searchText?: string;
   onSearchTextChange?: (v: string) => void;
@@ -37,6 +48,15 @@ type Props = {
   /* Pagination (server-side) */
   page: number; // 1-based
   totalPages: number;
+=======
+  /* Search (parent handles data fetch) */
+  searchText?: string;
+  onSearchTextChange?: (v: string) => void;
+
+  /* Pagination (server-side) */
+  page: number; // 1-based
+  totalPages: number; // provided by parent
+>>>>>>> 2a8dfd498642c07a3b20c3c73175f2c4b57bb785
   onPageChange?: (page: number) => void;
 
   /* Row action */
@@ -46,6 +66,7 @@ type Props = {
   emptyText?: string;
 };
 
+<<<<<<< HEAD
 /* ===================== Date utils ===================== */
 
 const MONTHS = [
@@ -179,6 +200,9 @@ function dateSearchTokens(dateStr: string): string[] {
 /* ===================== UI bits ===================== */
 
 const TabBtn: React.FC<{
+=======
+const PillTab: React.FC<{
+>>>>>>> 2a8dfd498642c07a3b20c3c73175f2c4b57bb785
   label: string;
   active?: boolean;
   onClick?: () => void;
@@ -187,6 +211,7 @@ const TabBtn: React.FC<{
     type="button"
     onClick={onClick}
     className={[
+<<<<<<< HEAD
       "relative rounded-full px-3.5 py-1.5 text-xs font-medium transition-all",
       "focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-300 focus-visible:ring-offset-2",
       active
@@ -198,10 +223,20 @@ const TabBtn: React.FC<{
     {active && (
       <span className="absolute inset-x-4 -bottom-[6px] h-[3px] rounded-full bg-amber-500/70" />
     )}
+=======
+      "px-3 py-1.5 rounded-full text-xs font-medium transition-colors",
+      active
+        ? "bg-[#FFB030] text-white shadow-sm"
+        : "bg-gray-100 text-gray-700 hover:bg-gray-200",
+    ].join(" ")}
+  >
+    {label}
+>>>>>>> 2a8dfd498642c07a3b20c3c73175f2c4b57bb785
   </button>
 );
 
 const StatusBadge: React.FC<{ status: Status }> = ({ status }) => {
+<<<<<<< HEAD
   const styles =
     status === "Completed"
       ? "bg-emerald-50 text-emerald-700 ring-emerald-200/60"
@@ -220,6 +255,18 @@ const StatusBadge: React.FC<{ status: Status }> = ({ status }) => {
           status === "Completed" ? "bg-emerald-500" : "bg-rose-500",
         ].join(" ")}
       />
+=======
+  const base =
+    "inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-medium";
+  return (
+    <span
+      className={
+        status === "Completed"
+          ? `${base} bg-emerald-50 text-emerald-700`
+          : `${base} bg-rose-50 text-rose-700`
+      }
+    >
+>>>>>>> 2a8dfd498642c07a3b20c3c73175f2c4b57bb785
       {status}
     </span>
   );
@@ -238,11 +285,16 @@ const Pagination: React.FC<{
   const isLast = page >= totalPages;
 
   return (
+<<<<<<< HEAD
     <div className="mt-5 flex flex-wrap items-center justify-center gap-2 text-xs">
+=======
+    <div className="flex items-center justify-center gap-2 text-xs mt-4">
+>>>>>>> 2a8dfd498642c07a3b20c3c73175f2c4b57bb785
       <button
         type="button"
         onClick={() => onPageChange?.(page - 1)}
         disabled={isFirst}
+<<<<<<< HEAD
         className="rounded-md px-2 py-1 text-gray-700 ring-1 ring-gray-200 disabled:opacity-40 hover:bg-gray-50"
       >
         Previous
@@ -265,11 +317,36 @@ const Pagination: React.FC<{
           </button>
         ))}
       </div>
+=======
+        className="text-gray-600 disabled:text-gray-300"
+      >
+        Previous
+      </button>
+      {pages.map((p) => (
+        <button
+          key={p}
+          type="button"
+          onClick={() => onPageChange?.(p)}
+          className={[
+            "h-7 w-7 rounded-full grid place-items-center",
+            p === page
+              ? "bg-[#FFB030] text-white"
+              : "text-gray-700 hover:bg-gray-100",
+          ].join(" ")}
+        >
+          {p}
+        </button>
+      ))}
+>>>>>>> 2a8dfd498642c07a3b20c3c73175f2c4b57bb785
       <button
         type="button"
         onClick={() => onPageChange?.(page + 1)}
         disabled={isLast}
+<<<<<<< HEAD
         className="rounded-md px-2 py-1 text-gray-700 ring-1 ring-gray-200 disabled:opacity-40 hover:bg-gray-50"
+=======
+        className="text-gray-600 disabled:text-gray-300"
+>>>>>>> 2a8dfd498642c07a3b20c3c73175f2c4b57bb785
       >
         Next
       </button>
@@ -277,8 +354,11 @@ const Pagination: React.FC<{
   );
 };
 
+<<<<<<< HEAD
 /* ===================== Main ===================== */
 
+=======
+>>>>>>> 2a8dfd498642c07a3b20c3c73175f2c4b57bb785
 const CustomerAppointmentHistory: React.FC<Props> = ({
   title = "Appointment History",
   rows,
@@ -289,13 +369,17 @@ const CustomerAppointmentHistory: React.FC<Props> = ({
   onPerPageChange,
   searchText = "",
   onSearchTextChange,
+<<<<<<< HEAD
   searchMode = "client",
+=======
+>>>>>>> 2a8dfd498642c07a3b20c3c73175f2c4b57bb785
   page,
   totalPages,
   onPageChange,
   onDelete,
   emptyText = "No appointments found.",
 }) => {
+<<<<<<< HEAD
   const isServer = searchMode === "server";
 
   /* Search state */
@@ -404,6 +488,38 @@ const CustomerAppointmentHistory: React.FC<Props> = ({
           <span className="text-gray-600">Show</span>
           <select
             className="h-9 rounded-md border border-gray-200 bg-white px-2 text-xs shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-amber-300"
+=======
+  return (
+    <section className="w-full px-5 md:px-8 pt-2 pb-6">
+      {/* Title */}
+      <h2 className="text-2xl sm:text-3xl font-semibold mb-4">{title}</h2>
+
+      {/* Tabs (parent will refetch) */}
+      <div className="flex items-center gap-2 mb-4">
+        <PillTab
+          label="All"
+          active={activeTab === "ALL"}
+          onClick={() => onTabChange?.("ALL")}
+        />
+        <PillTab
+          label="Completed"
+          active={activeTab === "COMPLETED"}
+          onClick={() => onTabChange?.("COMPLETED")}
+        />
+        <PillTab
+          label="Cancelled"
+          active={activeTab === "CANCELLED"}
+          onClick={() => onTabChange?.("CANCELLED")}
+        />
+      </div>
+
+      {/* Controls (parent will refetch) */}
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+        <div className="flex items-center gap-2 text-xs">
+          <span className="text-gray-600">Show</span>
+          <select
+            className="h-8 rounded-md border border-gray-300 bg-gray-100 px-2 text-xs"
+>>>>>>> 2a8dfd498642c07a3b20c3c73175f2c4b57bb785
             value={perPage}
             onChange={(e) => {
               onPerPageChange?.(Number(e.target.value));
@@ -419,6 +535,7 @@ const CustomerAppointmentHistory: React.FC<Props> = ({
           <span className="text-gray-600">entries</span>
         </div>
 
+<<<<<<< HEAD
         {/* Search */}
         <label className="relative block">
           <span className="sr-only">Search appointments</span>
@@ -541,6 +658,93 @@ const CustomerAppointmentHistory: React.FC<Props> = ({
       </div>
 
       {/* Pager */}
+=======
+        <label className="relative w-full max-w-xs">
+          <span className="sr-only">Search</span>
+          <input
+            value={searchText}
+            onChange={(e) => {
+              onSearchTextChange?.(e.target.value);
+              onPageChange?.(1);
+            }}
+            placeholder="Search service, stylist, date, etc."
+            className="w-full h-8 rounded-md border border-gray-300 pl-8 pr-2 text-xs placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-[#FFB030]"
+          />
+          <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+        </label>
+      </div>
+
+      {/* Table (compact, no avatar) */}
+      <div className="overflow-x-auto">
+        <table className="min-w-full text-left align-middle border-separate border-spacing-y-2">
+          <thead className="text-gray-700 text-xs">
+            <tr>
+              <th className="px-4 py-2 font-semibold">Service</th>
+              <th className="px-4 py-2 font-semibold">Stylist</th>
+              <th className="px-4 py-2 font-semibold">Date</th>
+              <th className="px-4 py-2 font-semibold">Amount</th>
+              <th className="px-4 py-2 font-semibold">Payment Mode</th>
+              <th className="px-4 py-2 font-semibold">Status</th>
+              <th className="px-4 py-2 font-semibold">Action</th>
+            </tr>
+          </thead>
+
+          <tbody>
+            {rows.length === 0 ? (
+              <tr>
+                <td
+                  colSpan={7}
+                  className="px-4 py-8 text-center text-gray-500 text-sm"
+                >
+                  {emptyText}
+                </td>
+              </tr>
+            ) : (
+              rows.map((r) => (
+                <tr
+                  key={r.id}
+                  className="bg-white rounded-lg overflow-hidden ring-1 ring-amber-100 hover:bg-amber-50/40"
+                >
+                  <td className="px-4 py-3">
+                    <div className="font-medium text-gray-800 text-sm">
+                      {r.service}
+                    </div>
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className="font-semibold text-gray-800 text-sm">
+                      {r.stylist}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-gray-800 text-sm">{r.date}</td>
+                  <td className="px-4 py-3 text-gray-800 text-sm">
+                    {r.amount}
+                  </td>
+                  <td className="px-4 py-3 text-gray-800 text-sm">
+                    {r.paymentMode}
+                  </td>
+                  <td className="px-4 py-3">
+                    <StatusBadge status={r.status} />
+                  </td>
+                  <td className="px-4 py-3">
+                    <button
+                      type="button"
+                      onClick={() => onDelete?.(r.id)}
+                      className="text-red-600 hover:text-red-700"
+                      aria-label={`Delete appointment ${r.id}`}
+                      title="Delete"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Server-side pager */}
+>>>>>>> 2a8dfd498642c07a3b20c3c73175f2c4b57bb785
       <Pagination
         page={page}
         totalPages={totalPages}

@@ -688,10 +688,15 @@ const AdminInventory: React.FC = () => {
   const categoryOptions = categories.map((c) => c.name);
 
   return (
+<<<<<<< HEAD
+=======
+    // ⬇️ Removed `lg:ml-64` so the page is no longer pushed far to the right
+>>>>>>> 2a8dfd498642c07a3b20c3c73175f2c4b57bb785
     <main className="min-h-screen overflow-x-hidden">
       <div className="mx-auto max-w-7xl p-6">
         <h1 className="text-3xl font-bold">Inventory Management</h1>
 
+<<<<<<< HEAD
         {/* Tabs — modern pill style */}
         <div className="mt-5 flex flex-wrap gap-2">
           <button
@@ -718,6 +723,23 @@ const AdminInventory: React.FC = () => {
           >
             Stock Movement
           </button>
+=======
+        {/* Tabs */}
+        <div className="mt-5 flex items-center gap-3">
+          {["inventory", "movement"].map((tab) => (
+            <button
+              key={tab}
+              className={`rounded-lg px-4 py-3 text-sm font-semibold transition-colors ${
+                activeTab === tab
+                  ? "bg-amber-400 text-white"
+                  : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+              }`}
+              onClick={() => setActiveTab(tab as "inventory" | "movement")}
+            >
+              {tab === "inventory" ? "Inventory" : "Stock Movement"}
+            </button>
+          ))}
+>>>>>>> 2a8dfd498642c07a3b20c3c73175f2c4b57bb785
         </div>
 
         {/* Header + Actions */}

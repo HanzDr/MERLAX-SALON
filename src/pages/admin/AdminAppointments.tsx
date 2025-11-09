@@ -1784,6 +1784,7 @@ const AdminAppointments: React.FC = () => {
   };
 
   const handleMarkComplete = async (a: Appt) => {
+    // Optimistic UI
     patchLocal(a.id, { status: "Completed" });
 
     try {
@@ -1794,11 +1795,20 @@ const AdminAppointments: React.FC = () => {
       return;
     }
 
+<<<<<<< HEAD
     if (a.customer_id) {
       createFeedbackForAppointment(a.id).catch((e) => {
         console.error("Feedback creation failed (non-blocking):", e);
       });
     }
+=======
+    // ✅ Always create feedback (idempotent) and ensure customer_id is set from DB
+    //    The hook fetches Appointments → grabs customer_id → writes into Feedback.customer_id
+    createFeedbackForAppointment(a.id).catch((e) => {
+      // Non-blocking (don't revert completion on feedback errors)
+      console.error("Feedback creation failed (non-blocking):", e);
+    });
+>>>>>>> 2a8dfd498642c07a3b20c3c73175f2c4b57bb785
   };
 
   const handleCancel = async (a: Appt) => {

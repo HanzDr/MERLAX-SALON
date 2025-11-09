@@ -33,8 +33,11 @@ import { AuthProvider } from "@/features/auth/context/AuthContext";
 import AdminInventory from "@/pages/admin/AdminInventory";
 import { InventoryProvider } from "@/features/inventory/context/InventoryContext";
 import UpdatePassword from "@/pages/UpdatePassword";
+<<<<<<< HEAD
 import { AnalyticsProvider } from "@/features/analytics/context/AnalyticsContext";
 import AdminAnalytics from "@/pages/admin/AdminAnalytics";
+=======
+>>>>>>> 2a8dfd498642c07a3b20c3c73175f2c4b57bb785
 const router = createBrowserRouter([
   {
     path: "/",

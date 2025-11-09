@@ -181,7 +181,11 @@ const useFeedback = () => {
         return { feedbackId: existing[0].feedback_id };
       }
 
+<<<<<<< HEAD
       // Pull display name & customer_id from Appointments
+=======
+      // Pull display name & customer_id from Appointments (authoritative at completion time)
+>>>>>>> 2a8dfd498642c07a3b20c3c73175f2c4b57bb785
       const { data: aRow, error: aErr } = await supabase
         .from("Appointments")
         .select("customer_id, firstName, middleName, lastName")
@@ -195,7 +199,11 @@ const useFeedback = () => {
       let lastName: string | null = aRow?.lastName ?? null;
       const customer_id: string | null = aRow?.customer_id ?? null;
 
+<<<<<<< HEAD
       // Prefer canonical names from Customers
+=======
+      // If it’s a customer account, prefer canonical names from Customers
+>>>>>>> 2a8dfd498642c07a3b20c3c73175f2c4b57bb785
       if (customer_id) {
         const { data: cRow, error: cErr } = await supabase
           .from("Customers")
@@ -212,7 +220,7 @@ const useFeedback = () => {
 
       const payload = {
         appointment_id,
-        customer_id,
+        customer_id, // ✅ persisted for customer-centric queries
         firstName,
         middleName,
         lastName,
@@ -221,9 +229,12 @@ const useFeedback = () => {
         admin_response: null,
         customer_response: null,
         isDisplay: true,
+<<<<<<< HEAD
         // initialize flags
         customerHasResponded: false,
         adminHasResponded: false,
+=======
+>>>>>>> 2a8dfd498642c07a3b20c3c73175f2c4b57bb785
       };
 
       const { data, error: insErr } = await supabase
